@@ -41,7 +41,10 @@ app.use(session({
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: process.env.NODE_ENV === 'production' } // Use secure cookies in production
+    cookie: {
+        secure: true, // Always true for cross-origin HTTPS
+        sameSite: 'none' // Required for cross-origin cookies
+    }
 }));
 app.use(passport.initialize());
 app.use(passport.session());
