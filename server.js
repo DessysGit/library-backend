@@ -14,10 +14,10 @@ const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { spawn } = require('child_process');
-
-
+const SQLiteStore = require('connect-sqlite3')(session);
 
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (required for rate-limit & session cookies on Render)
 app.disable('x-powered-by'); // Hide Express version info
 const PORT = 3000;
 
@@ -41,6 +41,7 @@ app.use(session({
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
+    store: new SQLiteStore({ db: 'sessions.sqlite', dir: './' }),
     cookie: {
         secure: true, // Always true for cross-origin HTTPS
         sameSite: 'none' // Required for cross-origin cookies
