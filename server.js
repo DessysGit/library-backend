@@ -26,7 +26,11 @@ app.use('/chatbot', express.static(path.join(__dirname, 'chatbot')));
 
 // Middleware setup
 app.use(express.urlencoded({ extended: true }));
-const allowedOrigin = 'https://strong-paletas-464b32.netlify.app';
+const isProduction = process.env.NODE_ENV === 'production';
+const allowedOrigin = isProduction
+    ? 'https://strong-paletas-464b32.netlify.app'
+    : 'http://localhost:3000';
+
 app.use(cors({
     origin: allowedOrigin,
     credentials: true
@@ -43,8 +47,8 @@ app.use(session({
     saveUninitialized: false,
     store: new SQLiteStore({ db: 'sessions.sqlite', dir: './' }),
     cookie: {
-        secure: true, // Always true for cross-origin HTTPS
-        sameSite: 'none' // Required for cross-origin cookies
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax'
     }
 }));
 app.use(passport.initialize());
