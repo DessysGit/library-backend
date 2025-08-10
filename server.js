@@ -26,7 +26,11 @@ app.use('/chatbot', express.static(path.join(__dirname, 'chatbot')));
 
 // Middleware setup
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+const allowedOrigin = 'https://strong-paletas-464b32.netlify.app';
+app.use(cors({
+    origin: allowedOrigin,
+    credentials: true
+}));
 app.use(bodyParser.json());
 
 // Ensure SESSION_SECRET is always set for express-session
