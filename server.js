@@ -8,6 +8,8 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const LocalStrategy = require('passport-local').Strategy;
 const multer = require('multer');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const fs = require('fs');
 const axios = require('axios');
 const { body, validationResult } = require('express-validator');
@@ -214,16 +216,25 @@ if (!fs.existsSync(uploadDir)) {
     console.log('Created uploads directory:', uploadDir);
 }
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadDir); // Use absolute path for uploads
-    },
-    filename: (req, file, cb) => {
-        cb(null, file.originalname); // Save file with its original name
-    }
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: 'dgxp6sdxa',
+  api_key: '817625651967554',
+  api_secret: 'rHbzIbaZUhkXxuLng1C_CfdqlGU'
 });
-const upload = multer({ storage: storage, limits: { fileSize: 50000000 } }); // 50 MB limit
+
+// Set up Multer storage to Cloudinary
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'book-covers',
+    allowed_formats: ['jpg', 'png', 'jpeg'],
+    transformation: [
+      { width: 600, height: 800, crop: 'fill', quality: 'auto' }
+    ]
+  },
+});
+const upload = multer({ storage: storage });
 
 // Authentication check middleware
 const isAuthenticated = (req, res, next) => {
