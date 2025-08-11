@@ -70,8 +70,9 @@ def recommendations():
 
     user_activity = fetch_user_activity(user_id)
     if not user_activity:
-        # If no user activity, return general recommendations (top 5 books)
-        recommendations = df.sample(5).to_dict('records')
+        # If no user activity, return general recommendations (up to 5 books)
+        n = min(5, len(df))
+        recommendations = df.sample(n).to_dict('records') if n > 0 else []
         return jsonify({"recommendations": recommendations})
 
     activity_df = books_to_df(user_activity)
@@ -82,7 +83,8 @@ def recommendations():
     sim_scores = activity_cosine_sim.mean(axis=0)
     sim_scores = list(enumerate(sim_scores))
     sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-    sim_scores = sim_scores[:5]  # Get the top 5 recommendations
+    n = min(5, len(sim_scores))
+    sim_scores = sim_scores[:n]  # Get up to top 5 recommendations
     book_indices = [i[0] for i in sim_scores]
     recommendations = df.iloc[book_indices].to_dict('records')
     return jsonify({"recommendations": recommendations})
@@ -106,7 +108,8 @@ if __name__ == '__main__':
         tfidf_matrix = tfidf.fit_transform(df['content'])
         user_activity = fetch_user_activity(user_id)
         if not user_activity:
-            recommendations = df.sample(5).to_dict('records')
+            n = min(5, len(df))
+            recommendations = df.sample(n).to_dict('records') if n > 0 else []
             print(json.dumps({"recommendations": recommendations}))
             sys.exit(0)
         activity_df = books_to_df(user_activity)
@@ -116,7 +119,8 @@ if __name__ == '__main__':
         sim_scores = activity_cosine_sim.mean(axis=0)
         sim_scores = list(enumerate(sim_scores))
         sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-        sim_scores = sim_scores[:5]
+        n = min(5, len(sim_scores))
+        sim_scores = sim_scores[:n]
         book_indices = [i[0] for i in sim_scores]
         recommendations = df.iloc[book_indices].to_dict('records')
         print(json.dumps({"recommendations": recommendations}))
