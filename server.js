@@ -17,6 +17,7 @@ const rateLimit = require('express-rate-limit');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { spawn } = require('child_process');
 const SQLiteStore = require('connect-sqlite3')(session);
+const { google } = require('googleapis');
 
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (required for rate-limit & session cookies on Render)
@@ -235,6 +236,15 @@ const storage = new CloudinaryStorage({
   },
 });
 const upload = multer({ storage: storage });
+const uploadPDF = multer({ dest: 'uploads/pdfs/' });
+
+const auth = new google.auth.GoogleAuth({
+  keyFile: 'gdrive-key.json',
+  scopes: ['https://www.googleapis.com/auth/drive']
+});
+const drive = google.drive({ version: 'v3', auth });
+
+const DRIVE_FOLDER_ID = '1cRPrsmYSBgCw4KRrFQL4fwAibvQ9tO1U';
 
 // Authentication check middleware
 const isAuthenticated = (req, res, next) => {
@@ -508,42 +518,106 @@ app.get('/checkAuthStatus', (req, res) => {
 });
 
 // Add book endpoint (admin only)
-app.post('/addBook', isAdmin, upload.fields([{ name: 'bookCover', maxCount: 1 }, { name: 'bookFile', maxCount: 1 }]), (req, res) => {
+app.post('/addBook', isAdmin, upload.fields([
+  { name: 'bookCover', maxCount: 1 },
+  { name: 'bookFile', maxCount: 1 }
+]), async (req, res) => {
+  try {
     const { title, author, description } = req.body;
     const genres = JSON.parse(req.body.genres);
-    const cover = req.files['bookCover'] ? req.files['bookCover'][0].originalname : null;
-    const file = req.files['bookFile'] ? req.files['bookFile'][0].originalname : null;
-    // Log uploaded files for debugging
-    console.log('Uploaded cover:', cover, 'Uploaded file:', file);
-    const genresString = genres.join(",");
 
-    if (!title || !author || !description || !genresString) {
-        res.status(400).send('Missing required fields');
-        return;
+    // Upload cover to Cloudinary
+    let coverUrl = null;
+    if (req.files['bookCover']) {
+      const coverPath = req.files['bookCover'][0].path;
+      const cloudinaryRes = await cloudinary.uploader.upload(coverPath, {
+        folder: 'book-covers',
+        transformation: [{ width: 600, height: 800, crop: 'fill', quality: 'auto' }]
+      });
+      coverUrl = cloudinaryRes.secure_url;
+      fs.unlinkSync(coverPath); // Remove temp file
     }
 
-    // Find the smallest available ID
-    db.get('SELECT MIN(id + 1) AS nextId FROM books WHERE (id + 1) NOT IN (SELECT id FROM books)', [], (err, row) => {
+    // Upload PDF to Google Drive
+    let pdfUrl = null;
+    if (req.files['bookFile']) {
+      const pdfPath = req.files['bookFile'][0].path;
+      const pdfName = req.files['bookFile'][0].originalname;
+      const fileMetadata = { name: pdfName, parents: [DRIVE_FOLDER_ID] };
+      const media = { mimeType: 'application/pdf', body: fs.createReadStream(pdfPath) };
+      const uploadedFile = await drive.files.create({
+        resource: fileMetadata,
+        media: media,
+        fields: 'id'
+      });
+      await drive.permissions.create({
+        fileId: uploadedFile.data.id,
+        requestBody: { role: 'reader', type: 'anyone' }
+      });
+      pdfUrl = `https://drive.google.com/uc?id=${uploadedFile.data.id}`;
+      fs.unlinkSync(pdfPath); // Remove temp file
+    }
+
+    const genresString = genres.join(",");
+    db.run(
+      'INSERT INTO books (title, author, description, genres, cover, file) VALUES (?, ?, ?, ?, ?, ?)',
+      [title, author, description, genresString, coverUrl, pdfUrl],
+      function (err) {
         if (err) {
-            console.error('Error finding next available ID:', err);
-            return res.status(500).send('Failed to add book');
+          console.error('Error adding book:', err);
+          return res.status(500).send('Failed to add book');
         }
+        res.status(200).json({ success: true, message: 'Book added successfully', cover: coverUrl, file: pdfUrl });
+      }
+    );
+  } catch (err) {
+    console.error('Add book error:', err);
+    res.status(500).json({ success: false, message: 'Failed to add book' });
+  }
+});
 
-        const nextId = row?.nextId || 1; // Default to 1 if no books exist
+// PDF upload endpoint
+app.post('/upload-pdf', uploadPDF.single('bookFile'), async (req, res) => {
+  try {
+    const filePath = req.file.path;
+    const fileName = req.file.originalname;
 
-        // Insert the new book with the calculated ID
-        db.run(
-            'INSERT INTO books (id, title, author, description, genres, cover, file) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [nextId, title, author, description, genresString, cover, file],
-            function (err) {
-                if (err) {
-                    console.error('Error adding book:', err);
-                    return res.status(500).send('Failed to add book');
-                }
-                res.status(200).send('Book added successfully');
-            }
-        );
+    // Upload to Google Drive
+    const fileMetadata = {
+      name: fileName,
+      parents: [DRIVE_FOLDER_ID]
+    };
+    const media = {
+      mimeType: 'application/pdf',
+      body: fs.createReadStream(filePath)
+    };
+
+    const uploadedFile = await drive.files.create({
+      resource: fileMetadata,
+      media: media,
+      fields: 'id'
     });
+
+    // Make file public
+    await drive.permissions.create({
+      fileId: uploadedFile.data.id,
+      requestBody: { role: 'reader', type: 'anyone' }
+    });
+
+    // Create direct download link
+    const directLink = `https://drive.google.com/uc?id=${uploadedFile.data.id}`;
+
+    // Delete local file
+    fs.unlinkSync(filePath);
+
+    // Store directLink in DB along with book info (example, adjust as needed)
+    // await db.run("INSERT INTO books (title, file) VALUES (?, ?)", [title, directLink]);
+
+    res.json({ success: true, pdfUrl: directLink });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'PDF upload failed' });
+  }
 });
 
 // Endpoint to download a book file
