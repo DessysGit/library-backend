@@ -9,7 +9,8 @@ const bcrypt = require('bcryptjs');
 const LocalStrategy = require('passport-local').Strategy;
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const streamifier = require('streamifier');
+const upload = multer({ storage: multer.memoryStorage() });
 const fs = require('fs');
 const axios = require('axios');
 const { body, validationResult } = require('express-validator');
@@ -17,13 +18,20 @@ const rateLimit = require('express-rate-limit');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { spawn } = require('child_process');
 const SQLiteStore = require('connect-sqlite3')(session);
-const { google } = require('googleapis');
+//const { google } = require('googleapis');
+require('dotenv').config();
+
+//console.log("Loaded GDRIVE_KEY:", process.env.GDRIVE_KEY ? "OK" : "Missing");
+
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
 const app = express();
 app.set('trust proxy', 1); // Trust first proxy (required for rate-limit & session cookies on Render)
 app.disable('x-powered-by'); // Hide Express version info
 const PORT = 3000;
 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/chatbot', express.static(path.join(__dirname, 'chatbot')));
 
 
@@ -210,41 +218,24 @@ passport.deserializeUser((id, done) => {
 // Middleware to parse JSON
 app.use(express.json());
 
-// Ensure uploads directory exists and log file uploads
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
-    console.log('Created uploads directory:', uploadDir);
-}
-
-// Configure Cloudinary
+// Configure Cloudinary from .env
 cloudinary.config({
-  cloud_name: 'dgxp6sdxa',
-  api_key: '817625651967554',
-  api_secret: 'rHbzIbaZUhkXxuLng1C_CfdqlGU'
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Set up Multer storage to Cloudinary
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'book-covers',
-    allowed_formats: ['jpg', 'png', 'jpeg'],
-    transformation: [
-      { width: 600, height: 800, crop: 'fill', quality: 'auto' }
-    ]
-  },
-});
-const upload = multer({ storage: storage });
-const uploadPDF = multer({ dest: 'uploads/pdfs/' });
+// Load Google Drive credentials from environment variable
+//const auth = new google.auth.GoogleAuth({
+//  credentials: JSON.parse(process.env.GDRIVE_KEY),
+//  scopes: ['https://www.googleapis.com/auth/drive']
+//});
 
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'gdrive-key.json',
-  scopes: ['https://www.googleapis.com/auth/drive']
-});
-const drive = google.drive({ version: 'v3', auth });
+//const drive = google.drive({ version: 'v3', auth });
 
-const DRIVE_FOLDER_ID = '1cRPrsmYSBgCw4KRrFQL4fwAibvQ9tO1U';
+// my folder ID here
+//const DRIVE_FOLDER_ID = '1cRPrsmYSBgCw4KRrFQL4fwAibvQ9tO1U';
+
 
 // Authentication check middleware
 const isAuthenticated = (req, res, next) => {
@@ -267,30 +258,57 @@ app.use((req, res, next) => {
 });
 
 // Profile picture upload endpoint
-app.post('/upload-profile-picture', upload.single('profilePicture'), (req, res) => {
-    const profilePictureUrl = `/uploads/${req.file.filename}`;
-    const userId = req.user.id; // Assuming user ID is available in the request
+app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePicture'), (req, res) => {
+  const userId = req.user.id;
 
-    // Update the user's profile picture URL in the database
-    db.run('UPDATE users SET profilePicture = ? WHERE id = ?', [profilePictureUrl, userId], function (err) {
-        if (err) {
-            return res.status(500).send(err.message);
+  if (process.env.CLOUDINARY_CLOUD_NAME) {
+    const fileBuffer = req.file.buffer;
+
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: 'profile-pictures', transformation: [{ width: 300, height: 300, crop: 'fill' }] },
+      (error, result) => {
+        if (error) {
+          console.error("Cloudinary error:", error);
+          return res.status(500).send("Failed to upload profile picture");
         }
-        res.json({ profilePictureUrl });
+
+        db.run('UPDATE users SET profilePicture = ? WHERE id = ?', [result.secure_url, userId], (err) => {
+          if (err) return res.status(500).send(err.message);
+          res.json({ profilePicture: result.secure_url });
+        });
+      }
+    );
+    stream.end(fileBuffer);
+
+  } else {
+    // Fallback: local /uploads
+    const uploadDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+    const filePath = path.join(uploadDir, req.file.originalname);
+    fs.writeFileSync(filePath, req.file.buffer);
+
+    const profilePictureUrl = `/uploads/${req.file.originalname}`;
+    db.run('UPDATE users SET profilePicture = ? WHERE id = ?', [profilePictureUrl, userId], (err) => {
+      if (err) return res.status(500).send(err.message);
+      res.json({ profilePicture: profilePictureUrl });
     });
+  }
 });
 
 // Endpoint to get user profile
 app.get('/profile', isAuthenticated, (req, res) => {
-    const { id } = req.user;
-    db.get('SELECT username, email, role, profilePicture, favoriteGenres, favoriteAuthors, favoriteBooks FROM users WHERE id = ?', [id], (err, user) => {
-        if (err) {
-            res.status(500).send(err.message);
-            return;
-        }
-        res.json(user);
-    });
+  const { id } = req.user;
+  db.get(
+    'SELECT username, email, role, profilePicture, favoriteGenres, favoriteAuthors, favoriteBooks FROM users WHERE id = ?',
+    [id],
+    (err, user) => {
+      if (err) return res.status(500).send(err.message);
+      res.json(user);
+    }
+  );
 });
+
 
 // Endpoint to update user profile
 app.post('/updateProfile', isAuthenticated, (req, res) => {
@@ -398,30 +416,25 @@ app.get('/books', (req, res) => {
 
 // Endpoint to fetch book details by ID
 app.get('/books/:id', (req, res) => {
-    const bookId = req.params.id;
-    db.get(
-        'SELECT id, title, author, genres, summary, description, cover, file, averageRating, likes, dislikes FROM books WHERE id = ?',
-        [bookId],
-        (err, row) => {
-            if (err) {
-                console.error('Error fetching book details:', err);
-                return res.status(500).send('Failed to fetch book details');
-            }
-            if (!row) {
-                return res.status(404).send('Book not found');
-            }
+  const bookId = req.params.id;
+  db.get(
+    'SELECT id, title, author, genres, summary, description, cover, file, averageRating, likes, dislikes FROM books WHERE id = ?',
+    [bookId],
+    (err, row) => {
+      if (err) {
+        console.error('Error fetching book details:', err);
+        return res.status(500).send('Failed to fetch book details');
+      }
+      if (!row) {
+        return res.status(404).send('Book not found');
+      }
 
-            // Add full paths for cover and file
-            row.cover = `/uploads/${row.cover}`;
-            row.file = `/uploads/${row.file}`;
-            res.json(row);
-        }
-    );
+      // Do not rewrite cover/file paths already full URLs from Cloudinary & Google Drive
+      res.json(row);
+    }
+  );
 });
 
-// Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(uploadDir));
 
 // Register route
 app.post('/register', [
@@ -517,120 +530,96 @@ app.get('/checkAuthStatus', (req, res) => {
     }
 });
 
-// Add book endpoint (admin only)
-app.post('/addBook', isAdmin, upload.fields([
-  { name: 'bookCover', maxCount: 1 },
-  { name: 'bookFile', maxCount: 1 }
-]), async (req, res) => {
+// Add book endpoint (Admin only)
+app.post('/addBook', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }]), async (req, res) => {
   try {
-    const { title, author, description } = req.body;
-    const genres = JSON.parse(req.body.genres);
-
-    // Upload cover to Cloudinary
     let coverUrl = null;
-    if (req.files['bookCover']) {
-      const coverPath = req.files['bookCover'][0].path;
-      const cloudinaryRes = await cloudinary.uploader.upload(coverPath, {
-        folder: 'book-covers',
-        transformation: [{ width: 600, height: 800, crop: 'fill', quality: 'auto' }]
-      });
-      coverUrl = cloudinaryRes.secure_url;
-      fs.unlinkSync(coverPath); // Remove temp file
-    }
-
-    // Upload PDF to Google Drive
     let pdfUrl = null;
-    if (req.files['bookFile']) {
-      const pdfPath = req.files['bookFile'][0].path;
-      const pdfName = req.files['bookFile'][0].originalname;
-      const fileMetadata = { name: pdfName, parents: [DRIVE_FOLDER_ID] };
-      const media = { mimeType: 'application/pdf', body: fs.createReadStream(pdfPath) };
-      const uploadedFile = await drive.files.create({
-        resource: fileMetadata,
-        media: media,
-        fields: 'id'
-      });
-      await drive.permissions.create({
-        fileId: uploadedFile.data.id,
-        requestBody: { role: 'reader', type: 'anyone' }
-      });
-      pdfUrl = `https://drive.google.com/uc?id=${uploadedFile.data.id}`;
-      fs.unlinkSync(pdfPath); // Remove temp file
+
+    // Check if Cloudinary is configured
+    const hasCloudinary =
+      process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET;
+
+    // Save to DB
+    const { title, author, description } = req.body;
+    // Parse genres (handle both stringified JSON and plain string)
+    let genres = req.body.genres;
+    if (genres) {
+      try {
+        genres = JSON.parse(genres);
+        if (Array.isArray(genres)) {
+          genres = genres.join(', ');
+        }
+      } catch (e) {
+        // If not JSON, keep as is
+      }
+    } else {
+      genres = '';
     }
 
-    const genresString = genres.join(",");
+    if (hasCloudinary) {
+      // Upload cover image to Cloudinary
+      if (req.files['cover']) {
+        const coverBuffer = req.files['cover'][0].buffer;
+        coverUrl = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: 'book-covers' },
+            (error, result) => error ? reject(error) : resolve(result.secure_url)
+          );
+          stream.end(coverBuffer);
+        });
+      }
+
+      // Upload PDF to Cloudinary (resource_type: raw)
+      if (req.files['bookFile']) {
+        const pdfBuffer = req.files['bookFile'][0].buffer;
+        pdfUrl = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: 'book-pdfs', resource_type: 'raw' },
+            (error, result) => error ? reject(error) : resolve(result.secure_url)
+          );
+          stream.end(pdfBuffer);
+        });
+      }
+    } else {
+      // Fallback: save files locally
+      const uploadDir = path.join(__dirname, 'uploads');
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+      if (req.files['cover']) {
+        const coverFile = req.files['cover'][0];
+        const coverPath = path.join(uploadDir, Date.now() + '-' + coverFile.originalname);
+        fs.writeFileSync(coverPath, coverFile.buffer);
+        coverUrl = `/uploads/${path.basename(coverPath)}`;
+      }
+      if (req.files['bookFile']) {
+        const bookFile = req.files['bookFile'][0];
+        const bookPath = path.join(uploadDir, Date.now() + '-' + bookFile.originalname);
+        fs.writeFileSync(bookPath, bookFile.buffer);
+        pdfUrl = `/uploads/${path.basename(bookPath)}`;
+      }
+    }
+
     db.run(
       'INSERT INTO books (title, author, description, genres, cover, file) VALUES (?, ?, ?, ?, ?, ?)',
-      [title, author, description, genresString, coverUrl, pdfUrl],
+      [title, author, description, genres, coverUrl, pdfUrl],
       function (err) {
         if (err) {
-          console.error('Error adding book:', err);
-          return res.status(500).send('Failed to add book');
+          console.error("DB error adding book:", err);
+          return res.status(500).send("Database error: " + err.message);
         }
-        res.status(200).json({ success: true, message: 'Book added successfully', cover: coverUrl, file: pdfUrl });
+        res.status(200).send('Book added successfully');
       }
     );
-  } catch (err) {
-    console.error('Add book error:', err);
-    res.status(500).json({ success: false, message: 'Failed to add book' });
+  } catch (error) {
+    console.error("Error uploading book:", error);
+    res.status(500).send("Failed to upload book: " + error.message);
   }
 });
 
-// PDF upload endpoint
-app.post('/upload-pdf', uploadPDF.single('bookFile'), async (req, res) => {
-  try {
-    const filePath = req.file.path;
-    const fileName = req.file.originalname;
 
-    // Upload to Google Drive
-    const fileMetadata = {
-      name: fileName,
-      parents: [DRIVE_FOLDER_ID]
-    };
-    const media = {
-      mimeType: 'application/pdf',
-      body: fs.createReadStream(filePath)
-    };
-
-    const uploadedFile = await drive.files.create({
-      resource: fileMetadata,
-      media: media,
-      fields: 'id'
-    });
-
-    // Make file public
-    await drive.permissions.create({
-      fileId: uploadedFile.data.id,
-      requestBody: { role: 'reader', type: 'anyone' }
-    });
-
-    // Create direct download link
-    const directLink = `https://drive.google.com/uc?id=${uploadedFile.data.id}`;
-
-    // Delete local file
-    fs.unlinkSync(filePath);
-
-    // Store directLink in DB along with book info (example, adjust as needed)
-    // await db.run("INSERT INTO books (title, file) VALUES (?, ?)", [title, directLink]);
-
-    res.json({ success: true, pdfUrl: directLink });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: 'PDF upload failed' });
-  }
-});
-
-// Endpoint to download a book file
-app.get('/download/:filename', (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(__dirname, 'uploads', filename);
-
-    if (fs.existsSync(filePath)) {
-        res.download(filePath, filename); // Serve the file with its original name
-    } else {
-        res.status(404).send('File not found');
-    }
-});
 
 // Grant admin role (seeded admin only)
 app.post('/users/:id/grant-admin', isSeedAdmin, (req, res) => {
@@ -683,55 +672,40 @@ app.put('/books/:id', isAdmin, (req, res) => {
 
 // Delete book endpoint (admin only)
 app.delete('/books/:id', isAdmin, (req, res) => {
-    const bookId = req.params.id;
+  const bookId = req.params.id;
 
-    // Fetch book details to get the file names
-    db.get('SELECT cover, file FROM books WHERE id = ?', [bookId], (err, row) => {
-        if (err) {
-            console.error('Error fetching book details:', err);
-            return res.status(500).send('Failed to fetch book details');
-        }
+  db.get('SELECT cover, file FROM books WHERE id = ?', [bookId], async (err, row) => {
+    if (err) return res.status(500).send('Failed to fetch book details');
+    if (!row) return res.status(404).send('Book not found');
 
-        const { cover, file } = row;
-        const coverPath = path.join(__dirname, 'uploads', cover);
-        const filePath = path.join(__dirname, 'uploads', file);
+    const { cover, file } = row;
 
-        // Delete the book record from the database
-        db.run('DELETE FROM books WHERE id = ?', [bookId], function (err) {
-            if (err) {
-                console.error('Error deleting book:', err);
-                return res.status(500).send('Failed to delete book');
-            }
+    try {
+      // Delete cover from Cloudinary
+      if (cover && cover.includes('cloudinary.com')) {
+        const publicId = cover.split('/').slice(-1)[0].split('.')[0];
+        await cloudinary.uploader.destroy(`book-covers/${publicId}`);
+      }
 
-            // Reset the auto-increment counter for the books table
-            db.run('DELETE FROM sqlite_sequence WHERE name = "books"', (err) => {
-                if (err) {
-                    console.error('Error resetting books auto-increment counter:', err);
-                }
-            });
+      // Delete PDF from Cloudinary (resource_type: raw)
+      if (file && file.includes('cloudinary.com')) {
+        const publicId = file.split('/').slice(-1)[0].split('.')[0];
+        await cloudinary.uploader.destroy(`book-pdfs/${publicId}`, { resource_type: 'raw' });
+      }
 
-            // Delete the cover image file
-            if (fs.existsSync(coverPath)) {
-                fs.unlink(coverPath, (err) => {
-                    if (err) {
-                        console.error('Error deleting cover image:', err);
-                    }
-                });
-            }
-
-            // Delete the book file
-            if (fs.existsSync(filePath)) {
-                fs.unlink(filePath, (err) => {
-                    if (err) {
-                        console.error('Error deleting book file:', err);
-                    }
-                });
-            }
-
-            res.status(200).send('Book deleted successfully');
-        });
-    });
+      // Delete DB record
+      db.run('DELETE FROM books WHERE id = ?', [bookId], (err) => {
+        if (err) return res.status(500).send('Failed to delete book');
+        res.send('Book deleted successfully');
+      });
+    } catch (e) {
+      console.error('Cloudinary delete error:', e.message);
+      res.status(500).send('Failed to delete book files');
+    }
+  });
 });
+
+
 
 // Endpoint to handle like action
 app.post('/books/:id/like', isAuthenticated, (req, res) => {
@@ -1095,5 +1069,3 @@ app.post('/api/chat', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
-
-// NOTE: For production, run behind HTTPS and set NODE_ENV=production
