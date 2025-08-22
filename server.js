@@ -225,6 +225,9 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Helper to check if running in production (on Render, etc.)
+const isCloudProduction = process.env.NODE_ENV === 'production' || process.env.FORCE_CLOUDINARY === 'true';
+
 // Load Google Drive credentials from environment variable
 //const auth = new google.auth.GoogleAuth({
 //  credentials: JSON.parse(process.env.GDRIVE_KEY),
@@ -261,9 +264,11 @@ app.use((req, res, next) => {
 app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePicture'), (req, res) => {
   const userId = req.user.id;
 
-  if (process.env.CLOUDINARY_CLOUD_NAME) {
-    const fileBuffer = req.file.buffer;
+  // Always use Cloudinary in production
+  const useCloudinary = isCloudProduction;
 
+  if (useCloudinary) {
+    const fileBuffer = req.file.buffer;
     const stream = cloudinary.uploader.upload_stream(
       { folder: 'profile-pictures', transformation: [{ width: 300, height: 300, crop: 'fill' }] },
       (error, result) => {
@@ -271,7 +276,6 @@ app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePictu
           console.error("Cloudinary error:", error);
           return res.status(500).send("Failed to upload profile picture");
         }
-
         db.run('UPDATE users SET profilePicture = ? WHERE id = ?', [result.secure_url, userId], (err) => {
           if (err) return res.status(500).send(err.message);
           res.json({ profilePicture: result.secure_url });
@@ -279,7 +283,6 @@ app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePictu
       }
     );
     stream.end(fileBuffer);
-
   } else {
     // Fallback: local /uploads
     const uploadDir = path.join(__dirname, 'uploads');
@@ -536,11 +539,8 @@ app.post('/addBook', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFil
     let coverUrl = null;
     let pdfUrl = null;
 
-    // Check if Cloudinary is configured
-    const hasCloudinary =
-      process.env.CLOUDINARY_CLOUD_NAME &&
-      process.env.CLOUDINARY_API_KEY &&
-      process.env.CLOUDINARY_API_SECRET;
+    // Always use Cloudinary in production
+    const useCloudinary = isCloudProduction;
 
     // Save to DB
     const { title, author, description } = req.body;
@@ -559,7 +559,7 @@ app.post('/addBook', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFil
       genres = '';
     }
 
-    if (hasCloudinary) {
+    if (useCloudinary) {
       // Upload cover image to Cloudinary
       if (req.files['cover']) {
         const coverBuffer = req.files['cover'][0].buffer;
