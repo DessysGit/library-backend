@@ -1065,6 +1065,42 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Download endpoint for book files (streams from Cloudinary or local)
+app.get('/download/:bookId', async (req, res) => {
+  const bookId = req.params.bookId;
+  db.get('SELECT title, file FROM books WHERE id = ?', [bookId], (err, row) => {
+    if (err || !row) return res.status(404).send('Book not found');
+    const fileUrl = row.file;
+    const title = row.title || 'book';
+
+    if (!fileUrl) return res.status(404).send('No file found for this book');
+
+    // If Cloudinary URL, stream it
+    if (fileUrl.startsWith('http')) {
+      const parsed = url.parse(fileUrl);
+      const protocol = parsed.protocol === 'https:' ? https : http;
+      protocol.get(fileUrl, (fileRes) => {
+        if (fileRes.statusCode !== 200) {
+          return res.status(404).send('File not found on remote server');
+        }
+        // Try to get extension from URL or fallback to .pdf
+        let ext = (parsed.pathname && parsed.pathname.split('.').pop()) || 'pdf';
+        if (ext.length > 5) ext = 'pdf';
+        res.setHeader('Content-Disposition', `attachment; filename="${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${ext}"`);
+        res.setHeader('Content-Type', fileRes.headers['content-type'] || 'application/pdf');
+        fileRes.pipe(res);
+      }).on('error', () => {
+        res.status(500).send('Failed to download file');
+      });
+    } else {
+      // Local file
+      const filePath = path.join(__dirname, fileUrl);
+      if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
+      res.download(filePath, `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
+    }
+  });
+});
+
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
