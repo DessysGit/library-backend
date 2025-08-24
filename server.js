@@ -176,20 +176,6 @@ const isAuthenticated = (req, res, next) => {
     res.status(401).send('You must be logged in to perform this action.');
 };
 
-// Verify the user role is set correctly
-app.use((req, res, next) => {
-    if (req.isAuthenticated()) {
-        db.get('SELECT role FROM users WHERE id = ?', [req.user.id], (err, user) => {
-            if (user) {
-                req.user.role = user.role; // Ensure the role is set correctly
-            }
-            next();
-        });
-    } else {
-        next();
-    }
-});
-
 // Profile picture upload endpoint
 app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePicture'), async (req, res) => {
   const userId = req.user.id;
