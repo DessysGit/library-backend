@@ -17,6 +17,7 @@ const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { spawn } = require('child_process');
+const app = express();
 //const SQLiteStore = require('connect-sqlite3')(session);
 //const { google } = require('googleapis');
 const url = require('url');
@@ -144,6 +145,7 @@ passport.deserializeUser(async (id, done) => {
 
 // Middleware to parse JSON
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Configure Cloudinary from .env
 cloudinary.config({
