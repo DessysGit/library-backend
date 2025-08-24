@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import pandas as pd
-import sqlite3
+import psycopg2
+import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
 import sys
@@ -8,9 +9,13 @@ import json
 
 app = Flask(__name__)
 
-# Function to fetch book data from SQLite database
+def get_pg_conn():
+    db_url = os.environ.get('DATABASE_URL_LOCAL') or os.environ.get('DATABASE_URL') or 'postgresql://postgres:yourpassword@localhost:5432/your_local_db'
+    return psycopg2.connect(db_url)
+
+# Function to fetch book data from Postgres database
 def fetch_books():
-    conn = sqlite3.connect('library.db')
+    conn = get_pg_conn()
     cursor = conn.cursor()
     cursor.execute('SELECT title, author, description, genres, cover FROM books')
     books = cursor.fetchall()
@@ -23,26 +28,17 @@ def books_to_df(books):
     df['content'] = df['title'] + ' ' + df['author'] + ' ' + df['description'] + ' ' + df['genres']
     return df
 
-# Function to fetch user activity data from SQLite database
+# Function to fetch user activity data from Postgres database
 def fetch_user_activity(user_id):
-    conn = sqlite3.connect('library.db')
+    conn = get_pg_conn()
     cursor = conn.cursor()
     cursor.execute('''
         SELECT b.title, b.author, b.description, b.genres, b.cover
         FROM books b
-        JOIN likes l ON b.id = l.bookId
-        WHERE l.userId = ? AND l.action = 'like'
-        UNION
-        SELECT b.title, b.author, b.description, b.genres, b.cover
-        FROM books b
-        JOIN downloads d ON b.id = d.bookId
-        WHERE d.userId = ?
-        UNION
-        SELECT b.title, b.author, b.description, b.genres, b.cover
-        FROM books b
-        JOIN searches s ON b.id = s.bookId
-        WHERE s.userId = ?
-    ''', (user_id, user_id, user_id))
+        JOIN likes l ON b.id = l.bookid
+        WHERE l.userid = %s AND l.action = 'like'
+        -- If you have downloads/searches tables in Postgres, add similar JOINs here
+    ''', (user_id,))
     activity = cursor.fetchall()
     conn.close()
     return activity
