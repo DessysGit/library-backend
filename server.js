@@ -22,6 +22,7 @@ const app = express();
 //const { google } = require('googleapis');
 const url = require('url');
 require('dotenv').config();
+const PORT = process.env.PORT || 3000;
 
 console.log('DATABASE_URL:', process.env.DATABASE_URL);
 console.log('DATABASE_URL_LOCAL:', process.env.DATABASE_URL_LOCAL);
