@@ -780,7 +780,13 @@ app.post('/books/:id/reviews', isAuthenticated, async (req, res) => {
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(uploadDir));
+// Local uploads folder (only for development)
+if (process.env.NODE_ENV !== 'production') {
+  const path = require('path');
+  const uploadDir = path.join(__dirname, 'uploads');
+  app.use('/uploads', express.static(uploadDir));
+}
+
 
 // Add centralized error handling middleware
 app.use((err, req, res, next) => {
