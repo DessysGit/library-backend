@@ -147,6 +147,17 @@ passport.deserializeUser(async (id, done) => {
 // Middleware to parse JSON
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'dev-secret-key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax'
+    }
+}));
+
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -227,26 +238,27 @@ app.get('/profile', isAuthenticated, async (req, res) => {
 
 
 // Endpoint to update user profile
-app.post('/updateProfile', isAuthenticated, (req, res) => {
+app.post('/updateProfile', isAuthenticated, async (req, res) => {
     const { id } = req.user;
     const { email, password, favoriteGenres, favoriteAuthors, favoriteBooks } = req.body;
 
-    let updateQuery = 'UPDATE users SET email = ?, favoriteGenres = ?, favoriteAuthors = ?, favoriteBooks = ?';
-    let params = [email, favoriteGenres, favoriteAuthors, favoriteBooks, id];
-
-    if (password) {
-        const hashedPassword = bcrypt.hashSync(password, 10);
-        updateQuery = 'UPDATE users SET email = ?, password = ?, favoriteGenres = ?, favoriteAuthors = ?, favoriteBooks = ?';
-        params = [email, hashedPassword, favoriteGenres, favoriteAuthors, favoriteBooks, id];
-    }
-
-    db.run(updateQuery + ' WHERE id = ?', params, function (err) {
-        if (err) {
-            res.status(500).send(err.message);
-            return;
+    try {
+        if (password) {
+            const hashedPassword = bcrypt.hashSync(password, 10);
+            await pool.query(
+                'UPDATE users SET email = $1, password = $2, favoriteGenres = $3, favoriteAuthors = $4, favoriteBooks = $5 WHERE id = $6',
+                [email, hashedPassword, favoriteGenres, favoriteAuthors, favoriteBooks, id]
+            );
+        } else {
+            await pool.query(
+                'UPDATE users SET email = $1, favoriteGenres = $2, favoriteAuthors = $3, favoriteBooks = $4 WHERE id = $5',
+                [email, favoriteGenres, favoriteAuthors, favoriteBooks, id]
+            );
         }
         res.send('Profile updated successfully.');
-    });
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
 });
 
 // Path to the file where email addresses will be stored
@@ -341,28 +353,16 @@ app.post('/register', [
     const { username, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Find the smallest available ID
-    db.get('SELECT MIN(id + 1) AS nextId FROM users WHERE (id + 1) NOT IN (SELECT id FROM users)', [], (err, row) => {
-        if (err) {
-            console.error('Error finding next available ID:', err);
-            return res.status(500).send('Failed to register user');
-        }
-
-        const nextId = row?.nextId || 1; // Default to 1 if no users exist
-
-        // Insert the new user with the calculated ID
-        db.run(
-            'INSERT INTO users (id, username, password, role) VALUES (?, ?, ?, "user")',
-            [nextId, username, hashedPassword],
-            (err) => {
-                if (err) {
-                    console.error('Error registering user:', err);
-                    return res.status(400).send(err.message);
-                }
-                res.send('User registered successfully.');
-            }
+    try {
+        await pool.query(
+            'INSERT INTO users (username, password, role) VALUES ($1, $2, $3)',
+            [username, hashedPassword, 'user']
         );
-    });
+        res.send('User registered successfully.');
+    } catch (err) {
+        console.error('Error registering user:', err);
+        res.status(400).send(err.message);
+    }
 });
 
 // Login route
@@ -520,28 +520,20 @@ app.post('/users/:id/revoke-admin', isSeedAdmin, async (req, res) => {
 });
 
 // Edit book endpoint (admin only)
-app.put('/books/:id', isAdmin, (req, res) => {
+app.put('/books/:id', isAdmin, async (req, res) => {
     const bookId = req.params.id;
     const { title, author, genres, summary, description } = req.body;
-    db.run(
-        'UPDATE books SET title = ?, author = ?, genres = ?, summary = ?, description = ? WHERE id = ?',
-        [title, author, genres, summary, description, bookId],
-        function (err) {
-            if (err) {
-                console.error('Error editing book:', err);
-                res.status(500).send('Failed to edit book');
-            } else {
-                db.get('SELECT * FROM books WHERE id = ?', [bookId], (err, updatedBook) => {
-                    if (err) {
-                        console.error('Error fetching updated book:', err);
-                        res.status(500).send('Failed to fetch updated book');
-                    } else {
-                        res.json(updatedBook); // Return updated book details
-                    }
-                });
-            }
-        }
-    );
+    try {
+        await pool.query(
+            'UPDATE books SET title = $1, author = $2, genres = $3, summary = $4, description = $5 WHERE id = $6',
+            [title, author, genres, summary, description, bookId]
+        );
+        const updatedBook = await pool.query('SELECT * FROM books WHERE id = $1', [bookId]);
+        res.json(updatedBook.rows[0]);
+    } catch (err) {
+        console.error('Error editing book:', err);
+        res.status(500).send('Failed to edit book');
+    }
 });
 
 // Delete book endpoint (admin only)
@@ -822,52 +814,43 @@ app.post('/api/chat', async (req, res) => {
 // Download endpoint for book files (streams from Cloudinary or local)
 app.get('/download/:bookId', async (req, res) => {
   const bookId = req.params.bookId;
-  db.get('SELECT title, file FROM books WHERE id = ?', [bookId], (err, row) => {
-    if (err) {
-      console.error(`DB error for bookId ${bookId}:`, err);
-      return res.status(404).send('Book not found');
-    }
-    if (!row) {
-      console.warn(`No book found with id ${bookId}`);
-      return res.status(404).send('Book not found');
-    }
-    const fileUrl = row.file;
-    const title = row.title || 'book';
-
-    if (!fileUrl) {
-      console.warn(`Book id ${bookId} has no file URL`);
-      return res.status(404).send('No file found for this book');
-    }
-
-    // If Cloudinary URL, stream it
-    if (fileUrl.startsWith('http')) {
-      const parsed = url.parse(fileUrl);
-      const protocol = parsed.protocol === 'https:' ? https : http;
-      protocol.get(fileUrl, (fileRes) => {
-        if (fileRes.statusCode !== 200) {
-          console.warn(`Remote file not found for bookId ${bookId}: ${fileUrl} (status ${fileRes.statusCode})`);
-          return res.status(404).send('File not found on remote server');
-        }
-        // Try to get extension from URL or fallback to .pdf
-        let ext = (parsed.pathname && parsed.pathname.split('.').pop()) || 'pdf';
-        if (ext.length > 5) ext = 'pdf';
-        res.setHeader('Content-Disposition', `attachment; filename="${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${ext}"`);
-        res.setHeader('Content-Type', fileRes.headers['content-type'] || 'application/pdf');
-        fileRes.pipe(res);
-      }).on('error', (e) => {
-        console.error(`Error streaming remote file for bookId ${bookId}:`, e);
-        res.status(500).send('Failed to download file');
-      });
-    } else {
-      // Local file
-      const filePath = path.join(__dirname, fileUrl);
-      if (!fs.existsSync(filePath)) {
-        console.warn(`Local file not found for bookId ${bookId}: ${filePath}`);
-        return res.status(404).send('File not found');
+  try {
+      const result = await pool.query('SELECT title, file FROM books WHERE id = $1', [bookId]);
+      if (result.rows.length === 0) {
+          return res.status(404).send('Book not found');
       }
-      res.download(filePath, `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
+      const { title, file: fileUrl } = result.rows[0];
+      // If Cloudinary URL, stream it
+      if (fileUrl.startsWith('http')) {
+        const parsed = url.parse(fileUrl);
+        const protocol = parsed.protocol === 'https:' ? https : http;
+        protocol.get(fileUrl, (fileRes) => {
+          if (fileRes.statusCode !== 200) {
+            console.warn(`Remote file not found for bookId ${bookId}: ${fileUrl} (status ${fileRes.statusCode})`);
+            return res.status(404).send('File not found on remote server');
+          }
+          // Try to get extension from URL or fallback to .pdf
+          let ext = (parsed.pathname && parsed.pathname.split('.').pop()) || 'pdf';
+          if (ext.length > 5) ext = 'pdf';
+          res.setHeader('Content-Disposition', `attachment; filename="${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${ext}"`);
+          res.setHeader('Content-Type', fileRes.headers['content-type'] || 'application/pdf');
+          fileRes.pipe(res);
+        }).on('error', (e) => {
+          console.error(`Error streaming remote file for bookId ${bookId}:`, e);
+          res.status(500).send('Failed to download file');
+        });
+      } else {
+        // Local file
+        const filePath = path.join(__dirname, fileUrl);
+        if (!fs.existsSync(filePath)) {
+          console.warn(`Local file not found for bookId ${bookId}: ${filePath}`);
+          return res.status(404).send('File not found');
+        }
+        res.download(filePath, `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
+      }
+    } catch (err) {
+      res.status(500).send('Failed to fetch book');
     }
-  });
 });
 
 // Start the server
