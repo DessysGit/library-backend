@@ -147,6 +147,8 @@ passport.deserializeUser(async (id, done) => {
 // Middleware to parse JSON
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Configure Cloudinary from .env
 cloudinary.config({
