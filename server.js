@@ -13,11 +13,11 @@ const fs = require('fs');
 const axios = require('axios');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { spawn } = require('child_process');
-const app = express();
-const url = require('url');
 require('dotenv').config();
+
+const app = express();
 const PORT = process.env.PORT || 3000;
 
 console.log('DATABASE_URL:', process.env.DATABASE_URL);
@@ -26,17 +26,10 @@ console.log('NODE_ENV:', process.env.NODE_ENV);
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Use DATABASE_URL_LOCAL for local dev, DATABASE_URL for production
-const connectionString = isProduction
-  ? process.env.DATABASE_URL
-  : (process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL);
+//Trust proxy (must come before rate limiting & sessions)
+app.set('trust proxy', 1);
 
-const pool = new Pool({
-  connectionString,
-  ssl: isProduction ? { rejectUnauthorized: false } : false
-});
-
-// CORS middleware (before routes)
+//CORS middleware (before routes)
 const corsOptions = {
   origin: [
     'http://localhost:3000', // local frontend
@@ -46,7 +39,21 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Create tables (run once at startup)
+// ✅ 3. JSON & URL parsing
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ 4. Database connection
+const connectionString = isProduction
+  ? process.env.DATABASE_URL
+  : (process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL);
+
+const pool = new Pool({
+  connectionString,
+  ssl: isProduction ? { rejectUnauthorized: false } : false
+});
+
+// ✅ 5. Create tables & seed admin (your block stays here)
 (async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -88,15 +95,20 @@ app.use(cors(corsOptions));
       text TEXT,
       rating INTEGER
     );
-    -- Add other tables as needed
   `);
-  // Seed admin user if not exists
+
+  // Seed admin user
   const seedAdmin = async () => {
-    const result = await pool.query('SELECT COUNT(*) AS count FROM users WHERE username = $1', ['admin']);
-    const row = result.rows[0];
-    if (row.count === 0) {
+    const result = await pool.query(
+      'SELECT COUNT(*) AS count FROM users WHERE username = $1',
+      ['admin']
+    );
+    if (parseInt(result.rows[0].count, 10) === 0) {
       const hashedPassword = await bcrypt.hash('adminpassword', 10);
-      await pool.query('INSERT INTO users (username, password, role) VALUES ($1, $2, $3)', ['admin', hashedPassword, 'admin']);
+      await pool.query(
+        'INSERT INTO users (username, password, role) VALUES ($1, $2, $3)',
+        ['admin', hashedPassword, 'admin']
+      );
       console.log('Admin user seeded successfully.');
     } else {
       console.log('Admin user already exists.');
@@ -104,6 +116,7 @@ app.use(cors(corsOptions));
   };
   seedAdmin();
 })();
+
 
 // Recalculate averageRating for all books
 const recalculateAverageRatings = async () => {
