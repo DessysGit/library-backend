@@ -39,11 +39,11 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// ✅ 3. JSON & URL parsing
+// JSON & URL parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ 4. Database connection
+// Database connection
 const connectionString = isProduction
   ? process.env.DATABASE_URL
   : (process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL);
@@ -53,7 +53,7 @@ const pool = new Pool({
   ssl: isProduction ? { rejectUnauthorized: false } : false
 });
 
-// ✅ 5. Create tables & seed admin (your block stays here)
+// Create tables & seed admin (your block stays here)
 (async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -166,14 +166,18 @@ app.use(express.urlencoded({ extended: true }));
 const PgSession = require('connect-pg-simple')(session);
 
 app.use(session({
-    store: new PgSession({ pool }),
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax'
-    }
+  store: new PgSession({
+    pool,                   // your pg Pool
+    tableName: 'session',   // default table name
+    createTableIfMissing: true // auto-create table
+  }),
+  secret: process.env.SESSION_SECRET || 'dev-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax'
+  }
 }));
 
 
