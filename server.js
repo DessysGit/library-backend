@@ -1,5 +1,4 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Pool } = require('pg');
 const path = require('path');
@@ -9,7 +8,6 @@ const bcrypt = require('bcryptjs');
 const LocalStrategy = require('passport-local').Strategy;
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
-const streamifier = require('streamifier');
 const upload = multer({ storage: multer.memoryStorage() });
 const fs = require('fs');
 const axios = require('axios');
@@ -18,8 +16,6 @@ const rateLimit = require('express-rate-limit');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { spawn } = require('child_process');
 const app = express();
-//const SQLiteStore = require('connect-sqlite3')(session);
-//const { google } = require('googleapis');
 const url = require('url');
 require('dotenv').config();
 const PORT = process.env.PORT || 3000;
@@ -35,14 +31,20 @@ const connectionString = isProduction
   ? process.env.DATABASE_URL
   : (process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL);
 
-console.log('Using Postgres connection:', connectionString);
-
 const pool = new Pool({
   connectionString,
   ssl: isProduction ? { rejectUnauthorized: false } : false
 });
 
-console.log('DATABASE_URL:', process.env.DATABASE_URL);
+// CORS middleware (before routes)
+const corsOptions = {
+  origin: [
+    'http://localhost:3000', // local frontend
+    'https://strong-paletas-464b32.netlify.app' // deployed frontend
+  ],
+  credentials: true // allow cookies/sessions
+};
+app.use(cors(corsOptions));
 
 // Create tables (run once at startup)
 (async () => {
@@ -148,8 +150,11 @@ passport.deserializeUser(async (id, done) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const PgSession = require('connect-pg-simple')(session);
+
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'dev-secret-key',
+    store: new PgSession({ pool }),
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -157,6 +162,7 @@ app.use(session({
         sameSite: isProduction ? 'none' : 'lax'
     }
 }));
+
 
 app.use(passport.initialize());
 app.use(passport.session());
@@ -170,18 +176,6 @@ cloudinary.config({
 
 // Helper to check if running in production (on Render, etc.)
 const isCloudProduction = process.env.NODE_ENV === 'production' || process.env.FORCE_CLOUDINARY === 'true';
-
-// Load Google Drive credentials from environment variable
-//const auth = new google.auth.GoogleAuth({
-//  credentials: JSON.parse(process.env.GDRIVE_KEY),
-//  scopes: ['https://www.googleapis.com/auth/drive']
-//});
-
-//const drive = google.drive({ version: 'v3', auth });
-
-// my folder ID here
-//const DRIVE_FOLDER_ID = '1cRPrsmYSBgCw4KRrFQL4fwAibvQ9tO1U';
-
 
 // Authentication check middleware
 const isAuthenticated = (req, res, next) => {
@@ -317,7 +311,7 @@ app.get('/books', async (req, res) => {
     const bookIds = booksWithAdminFlag.map(book => book.id);
     const placeholders = bookIds.map((_, i) => `($1, ${i + 2})`).join(',');
     const ratingQuery = `SELECT bookId, COUNT(*) AS totalRatings FROM reviews WHERE bookId IN (${placeholders}) GROUP BY bookId`;
-    const ratingsResult = await pool.query(ratingQuery, [userId, ...bookIds]);
+    const ratingsResult = await pool.query(ratingQuery, bookIds);
     const ratingsMap = Object.fromEntries(ratingsResult.rows.map(r => [r.bookid, r.totalratings]));
     booksWithAdminFlag.forEach(book => {
         book.totalRatings = ratingsMap[book.id] || 0;
@@ -507,17 +501,18 @@ app.post('/addBook', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFil
 
 // Grant admin role (seeded admin only)
 app.post('/users/:id/grant-admin', isSeedAdmin, async (req, res) => {
-    const { id } = req.params;
-    await pool.query('UPDATE users SET role = "admin" WHERE id = $1', [id]);
-    res.send(`User with ID ${id} granted admin role.`);
+  const { id } = req.params;
+  await pool.query('UPDATE users SET role = $1 WHERE id = $2', ['admin', id]);
+  res.send(`User with ID ${id} granted admin role.`);
 });
 
 // Revoke admin role (seeded admin only)
 app.post('/users/:id/revoke-admin', isSeedAdmin, async (req, res) => {
-    const { id } = req.params;
-    await pool.query('UPDATE users SET role = "user" WHERE id = $1 AND role = "admin"', [id]);
-    res.send(`User with ID ${id} revoked admin role.`);
+  const { id } = req.params;
+  await pool.query('UPDATE users SET role = $1 WHERE id = $2 AND role = $3', ['user', id, 'admin']);
+  res.send(`User with ID ${id} revoked admin role.`);
 });
+
 
 // Edit book endpoint (admin only)
 app.put('/books/:id', isAdmin, async (req, res) => {
