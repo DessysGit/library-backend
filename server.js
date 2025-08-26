@@ -20,39 +20,37 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('DATABASE_URL:', process.env.DATABASE_URL);
-console.log('DATABASE_URL_LOCAL:', process.env.DATABASE_URL_LOCAL);
-console.log('NODE_ENV:', process.env.NODE_ENV);
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://strong-paletas-464b32.netlify.app'
+];
 
-const isProduction = process.env.NODE_ENV === 'production';
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
 
-//Trust proxy (must come before rate limiting & sessions)
+// Trust proxy (must come before rate limiting & sessions)
 app.set('trust proxy', 1);
-
-//CORS middleware (before routes)
-const corsOptions = {
-  origin: [
-    'http://localhost:3000', // local frontend
-    'https://strong-paletas-464b32.netlify.app' // deployed frontend
-  ],
-  credentials: true // allow cookies/sessions
-};
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
-
 
 // JSON & URL parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Database connection
-const connectionString = isProduction
+const connectionString = process.env.NODE_ENV === 'production'
   ? process.env.DATABASE_URL
   : (process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL);
 
 const pool = new Pool({
   connectionString,
-  ssl: isProduction ? { rejectUnauthorized: false } : false
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
 // Create tables & seed admin (your block stays here)
@@ -177,8 +175,8 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax'
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   }
 }));
 
