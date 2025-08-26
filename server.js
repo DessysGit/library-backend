@@ -342,12 +342,15 @@ const booksWithAdminFlag = rows.map(book => ({
 
     // Fetch total ratings for each book
     const bookIds = booksWithAdminFlag.map(book => book.id);
-    const placeholders = bookIds.map((_, i) => `($1, ${i + 2})`).join(',');
-    const ratingQuery = `SELECT bookId, COUNT(*) AS totalRatings FROM reviews WHERE bookId IN (${placeholders}) GROUP BY bookId`;
-    const ratingsResult = await pool.query(ratingQuery, bookIds);
-    const ratingsMap = Object.fromEntries(ratingsResult.rows.map(r => [r.bookid, r.totalratings]));
+    let ratingsMap = {};
+    if (bookIds.length > 0) {
+      const inPlaceholders = bookIds.map((_, i) => `$${i + 1}`).join(', ');
+      const ratingQuery = `SELECT bookId, COUNT(*) AS totalRatings FROM reviews WHERE bookId IN (${inPlaceholders}) GROUP BY bookId`;
+      const ratingsResult = await pool.query(ratingQuery, bookIds);
+      ratingsMap = Object.fromEntries(ratingsResult.rows.map(r => [r.bookid, r.totalratings]));
+    }
     booksWithAdminFlag.forEach(book => {
-        book.totalRatings = ratingsMap[book.id] || 0;
+      book.totalRatings = ratingsMap[book.id] || 0;
     });
     res.json({ books: booksWithAdminFlag, total: count });
 });
