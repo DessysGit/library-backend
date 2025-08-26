@@ -38,6 +38,8 @@ const corsOptions = {
   credentials: true // allow cookies/sessions
 };
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 
 // JSON & URL parsing
 app.use(express.json());
@@ -306,23 +308,39 @@ app.get('/books', async (req, res) => {
     const isAdmin = req.isAuthenticated() && req.user.role === 'admin';
 
     let query = 'SELECT * FROM books WHERE title ILIKE $1 AND author ILIKE $2';
-    let params = [`%${title}%`, `%${author}%`];
+let params = [`%${title}%`, `%${author}%`];
 
-    if (genre) {
-        query += ' AND genres ILIKE $3';
-        params.push(`%${genre}%`);
-    }
-    query += ' ORDER BY title LIMIT $4 OFFSET $5';
-    params.push(limit, offset);
+// If genre filter exists, add it and use the next available param number
+if (genre) {
+  params.push(`%${genre}%`);
+  query += ` AND genres ILIKE $${params.length}`;
+}
 
-    const result = await pool.query(query, params);
-    const rows = result.rows;
-    const countResult = await pool.query('SELECT COUNT(*) AS total FROM books WHERE title ILIKE $1 AND author ILIKE $2', [`%${title}%`, `%${author}%`]);
-    const count = countResult.rows[0].total;
-    const booksWithAdminFlag = rows.map(book => ({
-        ...book,
-        isAdmin: isAdmin
-    }));
+// Add LIMIT and OFFSET with correct numbering
+params.push(limit);
+query += ` ORDER BY title LIMIT $${params.length}`;
+params.push(offset);
+query += ` OFFSET $${params.length}`;
+
+const result = await pool.query(query, params);
+const rows = result.rows;
+
+// Count query should also handle genre for consistent pagination
+let countQuery = 'SELECT COUNT(*) AS total FROM books WHERE title ILIKE $1 AND author ILIKE $2';
+let countParams = [`%${title}%`, `%${author}%`];
+if (genre) {
+  countParams.push(`%${genre}%`);
+  countQuery += ` AND genres ILIKE $${countParams.length}`;
+}
+
+const countResult = await pool.query(countQuery, countParams);
+const count = countResult.rows[0].total;
+
+const booksWithAdminFlag = rows.map(book => ({
+  ...book,
+  isAdmin: isAdmin
+}));
+
 
     // Fetch total ratings for each book
     const bookIds = booksWithAdminFlag.map(book => book.id);
