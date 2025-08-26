@@ -722,7 +722,7 @@ app.get("/recommendations", isAuthenticated, async (req, res) => {
             console.error('recommend.py error:', data.toString());
         });
 
-        python.on('close', (code) => {
+        python.on('close', async (code) => {
             try {
                 // Expect recommend.py to print a JSON string
                 const result = JSON.parse(output);
@@ -732,18 +732,18 @@ app.get("/recommendations", isAuthenticated, async (req, res) => {
                 res.json({ recommendations: filteredRecommendations });
             } catch (err) {
                 console.error('Error parsing recommend.py output:', err);
-                // Fallback: Return up to 4 sample recommendations excluding the current book
-                db.all(
-                    'SELECT id, title, description, cover FROM books WHERE id != ? LIMIT 4',
-                    [currentBookId],
-                    (err, rows) => {
-                        if (err) {
-                            console.error("Error fetching fallback recommendations:", err.message);
-                            return res.status(500).json({ error: "Error fetching recommendations" });
-                        }
-                        res.json({ recommendations: rows });
-                    }
-                );
+
+                // Fallback: query Postgres directly
+                try {
+                    const fallback = await pool.query(
+                        'SELECT id, title, description, cover FROM books WHERE id != $1 LIMIT 4',
+                        [currentBookId]
+                    );
+                    res.json({ recommendations: fallback.rows });
+                } catch (dbErr) {
+                    console.error("Error fetching fallback recommendations:", dbErr.message);
+                    res.status(500).json({ error: "Error fetching recommendations" });
+                }
             }
         });
     }
