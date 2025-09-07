@@ -497,7 +497,7 @@ app.post('/addBook', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFil
         const pdfBuffer = req.files['bookFile'][0].buffer;
         pdfUrl = await new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
-            { folder: 'book-pdfs', resource_type: 'raw' },
+            { folder: 'book-pdfs', resource_type: 'raw', use_filename: true, unique_filename: false },
             (error, result) => error ? reject(error) : resolve(result.secure_url)
           );
           stream.end(pdfBuffer);
