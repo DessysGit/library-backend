@@ -16,6 +16,10 @@ const rateLimit = require('express-rate-limit');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { spawn } = require('child_process');
 require('dotenv').config();
+const http = require('http');
+const https = require('https');
+const url = require('url');
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
