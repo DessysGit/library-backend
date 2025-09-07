@@ -47,8 +47,15 @@ app.use(express.urlencoded({ extended: true }));
 const connectionString = process.env.DATABASE_URL;
 
 const pool = new Pool({
-  connectionString,
-  ssl: { rejectUnauthorized: false } // Supabase requires SSL
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 5,                   // keep it low for Supabase free tier
+  idleTimeoutMillis: 30000, // close idle connections after 30s
+  connectionTimeoutMillis: 5000 // fail fast if DB can’t connect
+});
+
+pool.on("error", (err) => {
+  console.error("Unexpected DB error", err);
 });
 
 
