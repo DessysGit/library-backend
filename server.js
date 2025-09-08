@@ -21,6 +21,7 @@ const https = require('https');
 const url = require('url');
 
 
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -237,33 +238,64 @@ app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePictu
   const userId = req.user.id;
   const useCloudinary = isCloudProduction;
 
-  if (useCloudinary) {
-    const fileBuffer = req.file.buffer;
-    const stream = cloudinary.uploader.upload_stream(
-      { folder: 'profile-pictures', transformation: [{ width: 300, height: 300, crop: 'fill' }] },
-      async (error, result) => {
-        if (error) {
-          console.error("Cloudinary error:", error);
-          return res.status(500).send("Failed to upload profile picture");
-        }
-        await pool.query('UPDATE users SET profilePicture = $1 WHERE id = $2', [result.secure_url, userId]);
-        res.json({ profilePicture: result.secure_url });
-      }
+  try {
+    let profilePictureUrl = null;
+
+    if (useCloudinary) {
+      const fileBuffer = req.file.buffer;
+
+      // Upload to Cloudinary
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: 'profile-pictures', transformation: [{ width: 300, height: 300, crop: 'fill' }] },
+          (error, result) => {
+            if (error) {
+              console.error("Cloudinary error:", error);
+              return reject(error);
+            }
+            resolve(result);
+          }
+        );
+        stream.end(fileBuffer);
+      });
+
+      profilePictureUrl = result.secure_url;
+    } else {
+      // Fallback: local /uploads
+      const uploadDir = path.join(__dirname, 'uploads');
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+      const fileName = Date.now() + '-' + req.file.originalname;
+      const filePath = path.join(uploadDir, fileName);
+      fs.writeFileSync(filePath, req.file.buffer);
+
+      profilePictureUrl = `/uploads/${fileName}`;
+    }
+
+    // Update database
+    await pool.query(
+      'UPDATE users SET profilePicture = $1 WHERE id = $2',
+      [profilePictureUrl, userId]
     );
-    stream.end(fileBuffer);
-  } else {
-    // Fallback: local /uploads
-    const uploadDir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-    const filePath = path.join(uploadDir, req.file.originalname);
-    fs.writeFileSync(filePath, req.file.buffer);
+    // IMPORTANT: Update the session object so it persists across requests
+    req.user.profilePicture = profilePictureUrl;
 
-    const profilePictureUrl = `/uploads/${req.file.originalname}`;
-    await pool.query('UPDATE users SET profilePicture = $1 WHERE id = $2', [profilePictureUrl, userId]);
+    // Also save the session explicitly to ensure it's written to the store
+    req.session.save((err) => {
+      if (err) {
+        console.error('Session save error:', err);
+      }
+    });
+
     res.json({ profilePicture: profilePictureUrl });
+
+  } catch (err) {
+    console.error("Profile upload error:", err);
+    res.status(500).json({ error: "Upload failed: " + err.message });
   }
 });
+
 
 // Endpoint to get user profile
 app.get('/profile', isAuthenticated, async (req, res) => {
