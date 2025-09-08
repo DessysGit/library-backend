@@ -11,19 +11,19 @@
   "license": "ISC",
   "dependencies": {
     "axios": "^1.8.2",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
-    "body-parser": "^1.20.3",
+    "body-parser": "^1.11.0",
     "cloudinary": "^1.41.3",
     "connect-pg-simple": "^10.0.0",
     "connect-sqlite3": "^0.9.16",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
-    "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
-    "express-session": "^1.18.1",
+    "express": "^2.5.11",
+    "express-rate-limit": "^5.5.1",
+    "express-session": "^1.0.0",
     "express-validator": "^7.2.1",
-    "googleapis": "^155.0.1",
+    "googleapis": "^36.0.0",
     "install": "^0.13.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
@@ -32,13 +32,13 @@
     "passport-local": "^1.0.0",
     "pg": "^8.16.3",
     "python-shell": "^5.0.0",
-    "sqlite3": "^5.1.7",
+    "sqlite3": "^5.0.2",
     "streamifier": "^0.1.1"
   },
   "description": "",
   "devDependencies": {
     "@eslint/js": "^9.29.0",
-    "eslint": "^9.29.0",
+    "eslint": "^0.6.2",
     "globals": "^16.2.0"
   }
 }
