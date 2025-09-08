@@ -192,23 +192,24 @@ passport.deserializeUser(async (id, done) => {
     }
 });
 
-// Middleware to parse JSON
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
+// Session Configuration
 const PgSession = require('connect-pg-simple')(session);
 
 app.use(session({
   store: new PgSession({
-    pool,                   // your pg Pool
-    tableName: 'session',   // default table name
-    createTableIfMissing: true // auto-create table
+    pool: pool,                    // your pg Pool
+    tableName: 'session',          // default table name
+    createTableIfMissing: true,    // auto-create table
+    schemaName: 'public'           // explicitly set schema
   }),
-  secret: process.env.SESSION_SECRET || 'dev-secret-key',
+  secret: process.env.SESSION_SECRET || 'dev-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
+  name: 'sessionId',               // explicitly set session name
   cookie: {
     secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,                // add for security
+    maxAge: 24 * 60 * 60 * 1000,  // 24 hours
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   }
 }));
