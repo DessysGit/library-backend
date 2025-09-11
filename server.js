@@ -192,24 +192,23 @@ passport.deserializeUser(async (id, done) => {
     }
 });
 
-// Session Configuration
+// Middleware to parse JSON
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 const PgSession = require('connect-pg-simple')(session);
 
 app.use(session({
   store: new PgSession({
-    pool: pool,                    // your pg Pool
-    tableName: 'session',          // default table name
-    createTableIfMissing: true,    // auto-create table
-    schemaName: 'public'           // explicitly set schema
+    pool,                   // your pg Pool
+    tableName: 'session',   // default table name
+    createTableIfMissing: true // auto-create table
   }),
-  secret: process.env.SESSION_SECRET || 'dev-secret-key-change-in-production',
+  secret: process.env.SESSION_SECRET || 'dev-secret-key',
   resave: false,
   saveUninitialized: false,
-  name: 'sessionId',               // explicitly set session name
   cookie: {
     secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,                // add for security
-    maxAge: 24 * 60 * 60 * 1000,  // 24 hours
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   }
 }));
@@ -240,62 +239,58 @@ app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePictu
   const useCloudinary = isCloudProduction;
 
   try {
-    let profilePictureUrl = null;
-
     if (useCloudinary) {
       const fileBuffer = req.file.buffer;
 
       // Upload to Cloudinary
-      const result = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-          { folder: 'profile-pictures', transformation: [{ width: 300, height: 300, crop: 'fill' }] },
-          (error, result) => {
-            if (error) {
-              console.error("Cloudinary error:", error);
-              return reject(error);
-            }
-            resolve(result);
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'profile-pictures', transformation: [{ width: 300, height: 300, crop: 'fill' }] },
+        async (error, result) => {
+          if (error) {
+            console.error("Cloudinary error:", error);
+            return res.status(500).send("Failed to upload profile picture");
           }
-        );
-        stream.end(fileBuffer);
-      });
 
-      profilePictureUrl = result.secure_url;
+          // Save Cloudinary URL into DB using PostgreSQL syntax
+          await pool.query(
+            'UPDATE users SET profilePicture = $1 WHERE id = $2',
+            [result.secure_url, userId]
+          );
+
+          // Update session object so Passport has the latest value
+          req.user.profilePicture = result.secure_url;
+
+          res.json({ profilePicture: result.secure_url });
+        }
+      );
+      stream.end(fileBuffer);
+
     } else {
       // Fallback: local /uploads
       const uploadDir = path.join(__dirname, 'uploads');
       if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-      const fileName = Date.now() + '-' + req.file.originalname;
-      const filePath = path.join(uploadDir, fileName);
+      const filePath = path.join(uploadDir, req.file.originalname);
       fs.writeFileSync(filePath, req.file.buffer);
 
-      profilePictureUrl = `/uploads/${fileName}`;
+      const profilePictureUrl = `/uploads/${req.file.originalname}`;
+
+      await pool.query(
+        'UPDATE users SET profilePicture = $1 WHERE id = $2',
+        [profilePictureUrl, userId]
+      );
+
+      // Update session object
+      req.user.profilePicture = profilePictureUrl;
+
+      res.json({ profilePicture: profilePictureUrl });
     }
-
-    // Update database
-    await pool.query(
-      'UPDATE users SET profilePicture = $1 WHERE id = $2',
-      [profilePictureUrl, userId]
-    );
-
-    // IMPORTANT: Update the session object so it persists across requests
-    req.user.profilePicture = profilePictureUrl;
-
-    // Also save the session explicitly to ensure it's written to the store
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-      }
-    });
-
-    res.json({ profilePicture: profilePictureUrl });
-
   } catch (err) {
     console.error("Profile upload error:", err);
-    res.status(500).json({ error: "Upload failed: " + err.message });
+    res.status(500).json({ error: "Upload failed" });
   }
 });
+
 
 
 // Endpoint to get user profile
@@ -486,9 +481,20 @@ app.post('/logout', (req, res, next) => {
 });
 
 // Current user route
-app.get('/current-user', (req, res) => {
+app.get('/current-user', async (req, res) => {
     if (req.isAuthenticated()) {
-        res.json(req.user);
+        try {
+            // Always fetch fresh user data from database instead of relying on session
+            const result = await pool.query(
+                'SELECT id, username, role, profilePicture FROM users WHERE id = $1',
+                [req.user.id]
+            );
+            const freshUser = result.rows[0];
+            res.json(freshUser);
+        } catch (err) {
+            console.error('Error fetching current user:', err);
+            res.json(req.user); // fallback to session data
+        }
     } else {
         res.status(401).send('Not authenticated');
     }
