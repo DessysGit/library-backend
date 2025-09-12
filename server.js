@@ -66,55 +66,56 @@ pool.on("error", (err) => {
 
 // Create tables & seed admin
 async function ensureTables() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username TEXT UNIQUE,
-        password TEXT,
-        role TEXT,
-        email TEXT,
-        profilePicture TEXT,
-        favoriteGenres TEXT,
-        favoriteAuthors TEXT,
-        favoriteBooks TEXT
-      );
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                email TEXT,
+                "profilePicture" TEXT DEFAULT '',
+                "favoriteGenres" TEXT DEFAULT '',
+                "favoriteAuthors" TEXT DEFAULT '',
+                "favoriteBooks" TEXT DEFAULT ''
+            );
 
-      CREATE TABLE IF NOT EXISTS books (
-        id SERIAL PRIMARY KEY,
-        title TEXT,
-        author TEXT,
-        description TEXT,
-        genres TEXT,
-        cover TEXT,
-        file TEXT,
-        likes INTEGER DEFAULT 0,
-        dislikes INTEGER DEFAULT 0,
-        summary TEXT,
-        averageRating FLOAT
-      );
+            CREATE TABLE IF NOT EXISTS books (
+                id SERIAL PRIMARY KEY,
+                title TEXT,
+                author TEXT,
+                description TEXT,
+                genres TEXT,
+                cover TEXT,
+                file TEXT,
+                likes INTEGER DEFAULT 0,
+                dislikes INTEGER DEFAULT 0,
+                summary TEXT,
+                "averageRating" FLOAT DEFAULT 0
+            );
 
-      CREATE TABLE IF NOT EXISTS likes (
-        id SERIAL PRIMARY KEY,
-        userId INTEGER,
-        bookId INTEGER,
-        action TEXT,
-        UNIQUE(userId, bookId)
-      );
+            CREATE TABLE IF NOT EXISTS likes (
+                id SERIAL PRIMARY KEY,
+                "userId" INTEGER,
+                "bookId" INTEGER,
+                action TEXT,
+                UNIQUE("userId", "bookId")
+            );
 
-      CREATE TABLE IF NOT EXISTS reviews (
-        id SERIAL PRIMARY KEY,
-        bookId INTEGER,
-        userId INTEGER,
-        username TEXT,
-        text TEXT,
-        rating INTEGER
-      );
-    `);
-    console.log("✅ Tables ensured successfully.");
-  } catch (err) {
-    console.error("❌ Error ensuring tables:", err);
-  }
+            CREATE TABLE IF NOT EXISTS reviews (
+                id SERIAL PRIMARY KEY,
+                "bookId" INTEGER,
+                "userId" INTEGER,
+                username TEXT,
+                text TEXT,
+                rating INTEGER
+            );
+        `);
+        
+        console.log("✅Tables ensured successfully.");
+    } catch (err) {
+        console.error("Error ensuring tables:", err);
+    }
 }
 
 async function seedAdmin() {
@@ -291,21 +292,31 @@ app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePictu
   }
 });
 
+// profile endpoint to handle case sensitivity
+app.get('/profile', isAuthenticated, async (req, res) => { 
+    const { id } = req.user;
+    try {
+        // Try both cases
+        let result = await pool.query(
+            'SELECT username, email, role, profilePicture, favoriteGenres, favoriteAuthors, favoriteBooks FROM users WHERE id = $1',
+            [id]
+        );
+        
+        if (!result.rows[0] || !result.rows[0].hasOwnProperty('profilePicture')) {
+            // Try lowercase
+            result = await pool.query(
+                'SELECT username, email, role, profilepicture as "profilePicture", favoriteGenres, favoriteAuthors, favoriteBooks FROM users WHERE id = $1',
+                [id]
+            );
+        }
 
-
-// Endpoint to get user profile
-app.get('/profile', isAuthenticated, async (req, res) => {
-  const { id } = req.user;
-  try {
-    const result = await pool.query(
-      'SELECT username, email, role, profilePicture, favoriteGenres, favoriteAuthors, favoriteBooks FROM users WHERE id = $1',
-      [id]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Profile query error:', err);
+        res.status(500).send(err.message);
+    }
 });
+
 
 
 // Endpoint to update user profile
@@ -953,6 +964,11 @@ app.get('/download/:bookId', async (req, res) => {
     } catch (err) {
       res.status(500).send('Failed to fetch book');
     }
+});
+
+
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Start the server
