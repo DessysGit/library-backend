@@ -16,11 +16,11 @@ const rateLimit = require('express-rate-limit');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { spawn } = require('child_process');
 require('dotenv').config();
+const sgMail = require('@sendgrid/mail');
+const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
 const url = require('url');
-
-
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -48,75 +48,155 @@ app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Database connection
-const connectionString = process.env.DATABASE_URL;
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 5,                   // keep it low for Supabase free tier
-  idleTimeoutMillis: 30000, // close idle connections after 30s
-  connectionTimeoutMillis: 5000 // fail fast if DB can’t connect
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 3,                     // Reduce max connections to avoid overwhelming free tier
+  idleTimeoutMillis: 20000,   // Reduce idle timeout
+  connectionTimeoutMillis: 10000, // Increase connection timeout
+  acquireTimeoutMillis: 60000,    // Add acquire timeout
+  createTimeoutMillis: 30000,     // Add create timeout
+  destroyTimeoutMillis: 5000,     // Add destroy timeout
+  reapIntervalMillis: 1000,       // Add reap interval
+  createRetryIntervalMillis: 200, // Add retry interval
 });
 
 pool.on("error", (err) => {
   console.error("Unexpected DB error", err);
+  // Don't exit the process, just log the error
 });
 
-
-// Create tables & seed admin
-async function ensureTables() {
+// Test the connection before using it
+async function testConnection() {
+  const maxRetries = 3;
+  let retries = 0;
+  
+  while (retries < maxRetries) {
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
-                email TEXT,
-                "profilePicture" TEXT DEFAULT '',
-                "favoriteGenres" TEXT DEFAULT '',
-                "favoriteAuthors" TEXT DEFAULT '',
-                "favoriteBooks" TEXT DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS books (
-                id SERIAL PRIMARY KEY,
-                title TEXT,
-                author TEXT,
-                description TEXT,
-                genres TEXT,
-                cover TEXT,
-                file TEXT,
-                likes INTEGER DEFAULT 0,
-                dislikes INTEGER DEFAULT 0,
-                summary TEXT,
-                "averageRating" FLOAT DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS likes (
-                id SERIAL PRIMARY KEY,
-                "userId" INTEGER,
-                "bookId" INTEGER,
-                action TEXT,
-                UNIQUE("userId", "bookId")
-            );
-
-            CREATE TABLE IF NOT EXISTS reviews (
-                id SERIAL PRIMARY KEY,
-                "bookId" INTEGER,
-                "userId" INTEGER,
-                username TEXT,
-                text TEXT,
-                rating INTEGER
-            );
-        `);
-        
-        console.log("✅Tables ensured successfully.");
+      const client = await pool.connect();
+      console.log('✅ Database connected successfully');
+      client.release();
+      return true;
     } catch (err) {
-        console.error("Error ensuring tables:", err);
+      retries++;
+      console.error(`❌ Database connection attempt ${retries} failed:`, err.message);
+      if (retries === maxRetries) {
+        throw err;
+      }
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+}
+
+
+// Create tables & seed admin including email verification
+async function ensureTables() {
+    const maxRetries = 3;
+    let retries = 0;
+    
+    while (retries < maxRetries) {
+        try {
+            const client = await pool.connect();
+            
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user',
+                    "profilePicture" TEXT DEFAULT '',
+                    "favoriteGenres" TEXT DEFAULT '',
+                    "favoriteAuthors" TEXT DEFAULT '',
+                    "favoriteBooks" TEXT DEFAULT '',
+                    "isEmailVerified" BOOLEAN DEFAULT FALSE,
+                    "emailVerificationToken" TEXT,
+                    "emailVerificationExpires" TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS books (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT,
+                    author TEXT,
+                    description TEXT,
+                    genres TEXT,
+                    cover TEXT,
+                    file TEXT,
+                    likes INTEGER DEFAULT 0,
+                    dislikes INTEGER DEFAULT 0,
+                    summary TEXT,
+                    "averageRating" FLOAT DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS likes (
+                    id SERIAL PRIMARY KEY,
+                    "userId" INTEGER,
+                    "bookId" INTEGER,
+                    action TEXT,
+                    UNIQUE("userId", "bookId")
+                );
+
+                CREATE TABLE IF NOT EXISTS reviews (
+                    id SERIAL PRIMARY KEY,
+                    "bookId" INTEGER,
+                    "userId" INTEGER,
+                    username TEXT,
+                    text TEXT,
+                    rating INTEGER
+                );
+            `);
+            
+            client.release();
+            console.log("✅ Tables ensured successfully.");
+            return;
+            
+        } catch (err) {
+            retries++;
+            console.error(`❌ Error ensuring tables (attempt ${retries}):`, err.message);
+            
+            if (retries === maxRetries) {
+                console.error("❌ Failed to ensure tables after maximum retries");
+                throw err;
+            }
+            
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
     }
 }
+
+// Function to send verification email
+async function sendVerificationEmail(email, token) {
+    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${token}`;
+    
+    const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: 'Des2 Library - Verify Your Email',
+        html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #1DB954;">Welcome to Des2 Library!</h2>
+                <p>Thank you for registering. Please verify your email address by clicking the link below:</p>
+                <a href="${verificationUrl}" style="display: inline-block; background-color: #1DB954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 20px 0;">Verify Email</a>
+                <p>Or copy and paste this link in your browser:</p>
+                <p style="color: #666;">${verificationUrl}</p>
+                <p>This link will expire in 24 hours.</p>
+                <p>If you didn't create an account, you can safely ignore this email.</p>
+            </div>
+        `
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        return true;
+    } catch (error) {
+        console.error('Error sending verification email:', error);
+        return false;
+    }
+}
+
 
 async function seedAdmin() {
   try {
@@ -146,11 +226,23 @@ async function seedAdmin() {
 
 // Run setup immediately at startup
 (async () => {
-  await ensureTables();
-  await seedAdmin();
+    try {
+        console.log('🔄 Testing database connection...');
+        await testConnection();
+        
+        console.log('🔄 Ensuring database tables...');
+        await ensureTables();
+        
+        console.log('🔄 Seeding admin user...');
+        await seedAdmin();
+        
+        console.log('✅ Database setup completed successfully');
+    } catch (error) {
+        console.error('❌ Database setup failed:', error.message);
+        console.log('⚠️  Server will continue to run, but database functionality may be limited');
+        // Don't exit the process - let the server start anyway
+    }
 })();
-
-
 
 // Recalculate averageRating for all books
 const recalculateAverageRatings = async () => {
@@ -168,11 +260,24 @@ const recalculateAverageRatings = async () => {
 recalculateAverageRatings();
 
 // Configure Passport.js for authentication
-passport.use(new LocalStrategy(async (username, password, done) => {
+passport.use(new LocalStrategy({
+    usernameField: 'emailOrUsername',
+    passwordField: 'password'
+}, async (emailOrUsername, password, done) => {
     try {
-        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        // Check if it's an email or username
+        const isEmail = emailOrUsername.includes('@');
+        const query = isEmail 
+            ? 'SELECT * FROM users WHERE email = $1'
+            : 'SELECT * FROM users WHERE username = $1';
+            
+        const result = await pool.query(query, [emailOrUsername]);
         const user = result.rows[0];
-        if (!user || !bcrypt.compareSync(password, user.password)) return done(null, false, { message: 'Incorrect username or password.' });
+        
+        if (!user || !bcrypt.compareSync(password, user.password)) {
+            return done(null, false, { message: 'Incorrect email/username or password.' });
+        }
+        
         return done(null, user);
     } catch (err) {
         return done(err);
@@ -201,17 +306,20 @@ const PgSession = require('connect-pg-simple')(session);
 
 app.use(session({
   store: new PgSession({
-    pool,                   // your pg Pool
-    tableName: 'session',   // default table name
-    createTableIfMissing: true // auto-create table
+    pool,                   
+    tableName: 'session',   
+    createTableIfMissing: true 
   }),
   secret: process.env.SESSION_SECRET || 'dev-secret-key',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
-  }
+    secure: false,                    // Set to false for local development
+    httpOnly: true,                   // Add this for security
+    maxAge: 24 * 60 * 60 * 1000,     // 24 hours
+    sameSite: 'lax'                   // Use 'lax' for local development
+  },
+  name: 'sessionId'                   // Add explicit session name
 }));
 
 
@@ -233,6 +341,236 @@ const isAuthenticated = (req, res, next) => {
     if (req.isAuthenticated()) return next();
     res.status(401).send('You must be logged in to perform this action.');
 };
+
+// Configure SendGrid (add after your existing configurations)
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// Email template function
+function createVerificationEmailTemplate(verificationUrl, username = 'User') {
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verify Your Email - Des2 Library</title>
+        <style>
+            body {
+                font-family: 'Arial', sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f4f4f4;
+            }
+            .container {
+                background-color: #ffffff;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 2px solid #1DB954;
+            }
+            .logo {
+                color: #1DB954;
+                font-size: 28px;
+                font-weight: bold;
+                margin: 0;
+            }
+            .tagline {
+                color: #666;
+                font-size: 16px;
+                margin: 5px 0 0 0;
+            }
+            .content {
+                margin: 30px 0;
+            }
+            .welcome-text {
+                font-size: 18px;
+                color: #333;
+                margin-bottom: 20px;
+            }
+            .verify-button {
+                display: inline-block;
+                background: linear-gradient(45deg, #1DB954, #17a647);
+                color: white;
+                padding: 15px 30px;
+                text-decoration: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 16px;
+                margin: 20px 0;
+                transition: transform 0.3s ease;
+            }
+            .verify-button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 5px 15px rgba(29, 185, 84, 0.4);
+            }
+            .url-text {
+                background-color: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                border-left: 4px solid #1DB954;
+                word-break: break-all;
+                font-family: 'Courier New', monospace;
+                font-size: 14px;
+                color: #666;
+                margin: 15px 0;
+            }
+            .footer {
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #eee;
+                text-align: center;
+                font-size: 14px;
+                color: #666;
+            }
+            .warning {
+                background-color: #fff3cd;
+                border: 1px solid #ffeaa7;
+                color: #856404;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 20px 0;
+            }
+            @media (max-width: 600px) {
+                body {
+                    padding: 10px;
+                }
+                .container {
+                    padding: 20px;
+                }
+                .verify-button {
+                    display: block;
+                    text-align: center;
+                    margin: 20px 0;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1 class="logo">Des2 Library</h1>
+                <p class="tagline">Your Gateway to Infinite Knowledge</p>
+            </div>
+            
+            <div class="content">
+                <h2 style="color: #1DB954;">Welcome to Des2 Library!</h2>
+                <p class="welcome-text">Hello ${username},</p>
+                <p>Thank you for joining our community of book lovers! To complete your registration and start exploring our vast collection of books, please verify your email address.</p>
+                
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="${verificationUrl}" class="verify-button">Verify My Email</a>
+                </div>
+                
+                <p>If the button above doesn't work, you can copy and paste this link into your browser:</p>
+                <div class="url-text">${verificationUrl}</div>
+                
+                <div class="warning">
+                    <strong>Important:</strong> This verification link will expire in 24 hours for security reasons.
+                </div>
+                
+                <p>Once verified, you'll be able to:</p>
+                <ul>
+                    <li>Browse and download thousands of books</li>
+                    <li>Rate and review your favorite reads</li>
+                    <li>Get personalized book recommendations</li>
+                    <li>Subscribe to our newsletter for updates</li>
+                </ul>
+            </div>
+            
+            <div class="footer">
+                <p>If you didn't create an account with Des2 Library, you can safely ignore this email.</p>
+                <p>Questions? Contact us at <a href="mailto:support@des2library.com" style="color: #1DB954;">support@des2library.com</a></p>
+                <p>&copy; 2025 Des2 Library. All rights reserved.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+}
+
+// Function to send verification email using SendGrid
+async function sendVerificationEmail(email, token, username = 'User') {
+    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${token}`;
+    
+    const msg = {
+        to: email,
+        from: {
+            email: process.env.SENDGRID_FROM_EMAIL,
+            name: 'Des2 Library'
+        },
+        subject: 'Verify Your Email - Des2 Library',
+        html: createVerificationEmailTemplate(verificationUrl, username),
+        // Fallback text version
+        text: `
+Welcome to Des2 Library!
+
+Hello ${username},
+
+Thank you for joining our community! Please verify your email address by visiting this link:
+${verificationUrl}
+
+This link will expire in 24 hours.
+
+If you didn't create an account, you can safely ignore this email.
+
+Best regards,
+Des2 Library Team
+        `.trim(),
+        // Optional: Add tracking and categories
+        trackingSettings: {
+            clickTracking: {
+                enable: true,
+                enableText: false
+            },
+            openTracking: {
+                enable: true
+            }
+        },
+        categories: ['email-verification']
+    };
+
+    try {
+        const response = await sgMail.send(msg);
+        console.log('Verification email sent successfully:', response[0].statusCode);
+        return true;
+    } catch (error) {
+        console.error('SendGrid error:', error);
+        
+        // Log more details about the error
+        if (error.response) {
+            console.error('SendGrid response body:', error.response.body);
+        }
+        
+        return false;
+    }
+}
+
+// Health check endpoint to verify SendGrid configuration
+app.get('/email-health', async (req, res) => {
+    try {
+        // This doesn't actually send an email, just tests the configuration
+        const isConfigured = !!(process.env.SENDGRID_API_KEY && process.env.SENDGRID_FROM_EMAIL);
+        
+        res.json({
+            sendgrid_configured: isConfigured,
+            from_email: process.env.SENDGRID_FROM_EMAIL || 'Not configured',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: 'Email service health check failed',
+            details: error.message
+        });
+    }
+});
 
 // Profile picture upload endpoint
 app.post('/upload-profile-picture', isAuthenticated, upload.single('profilePicture'), async (req, res) => {
@@ -444,41 +782,230 @@ app.get('/books/:id', async (req, res) => {
 
 // Register route
 app.post('/register', [
-    body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
+    body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long')
+        .matches(/^[a-zA-Z0-9_]+$/).withMessage('Username can only contain letters, numbers, and underscores'),
+    body('email').isEmail().withMessage('Please provide a valid email address')
+        .normalizeEmail(),
     body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long')
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
-    const { username, password } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const { username, email, password } = req.body;
 
     try {
-        await pool.query(
-            'INSERT INTO users (username, password, role) VALUES ($1, $2, $3)',
-            [username, hashedPassword, 'user']
+        // Check if email already exists
+        const emailCheck = await pool.query(
+            'SELECT COUNT(*) AS count FROM users WHERE email = $1',
+            [email.toLowerCase()]
         );
-        res.send('User registered successfully.');
+
+        if (parseInt(emailCheck.rows[0].count, 10) > 0) {
+            return res.status(400).json({ 
+                errors: [{ msg: 'An account with this email already exists' }] 
+            });
+        }
+
+        // Check if username already exists
+        const usernameCheck = await pool.query(
+            'SELECT COUNT(*) AS count FROM users WHERE username = $1',
+            [username]
+        );
+
+        if (parseInt(usernameCheck.rows[0].count, 10) > 0) {
+            return res.status(400).json({ 
+                errors: [{ msg: 'This username is already taken' }] 
+            });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 12);
+        const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+        const emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+        // Create user account but mark as unverified
+        await pool.query(
+            'INSERT INTO users (username, email, password, role, "emailVerificationToken", "emailVerificationExpires", "isEmailVerified") VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [username, email.toLowerCase(), hashedPassword, 'user', emailVerificationToken, emailVerificationExpires, false]
+        );
+
+        // Send verification email (ONLY during registration)
+        const emailSent = await sendVerificationEmail(email, emailVerificationToken, username);
+
+        if (!emailSent) {
+            return res.status(500).json({ 
+                errors: [{ msg: 'Account created but verification email could not be sent. You can request a new verification email.' }],
+                requiresVerification: true,
+                canResendEmail: true
+            });
+        }
+
+        res.status(201).json({ 
+            message: 'Registration successful! Please check your email and click the verification link before you can log in.',
+            requiresVerification: true 
+        });
+
     } catch (err) {
         console.error('Error registering user:', err);
-        res.status(400).send(err.message);
+        res.status(500).json({ 
+            errors: [{ msg: 'Registration failed. Please try again later.' }] 
+        });
+    }
+});
+
+// EMAIL VERIFICATION ENDPOINT - Called when user clicks link in email
+app.get('/verify-email', async (req, res) => {
+    const { token } = req.query;
+
+    if (!token) {
+        return res.status(400).send('Verification token is required');
+    }
+
+    try {
+        const result = await pool.query(
+            'SELECT id, email, username FROM users WHERE "emailVerificationToken" = $1 AND "emailVerificationExpires" > NOW() AND "isEmailVerified" = FALSE',
+            [token]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(400).send(`
+                <html>
+                    <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
+                        <h2 style="color: #dc3545;">Invalid or Expired Token</h2>
+                        <p>The verification link is invalid, expired, or already used.</p>
+                        <a href="/index.html" style="color: #1DB954;">Return to Login</a>
+                    </body>
+                </html>
+            `);
+        }
+
+        const user = result.rows[0];
+
+        // Mark user as verified and clear verification tokens
+        await pool.query(
+            'UPDATE users SET "isEmailVerified" = TRUE, "emailVerificationToken" = NULL, "emailVerificationExpires" = NULL WHERE id = $1',
+            [user.id]
+        );
+
+        res.send(`
+            <html>
+                <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
+                    <h2 style="color: #1DB954;">Email Verified Successfully!</h2>
+                    <p>Welcome to Des2 Library, ${user.username}! Your email has been verified.</p>
+                    <p>You can now log in to your account and start exploring our book collection.</p>
+                    <a href="/index.html" style="display: inline-block; background-color: #1DB954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 20px;">Go to Login</a>
+                </body>
+            </html>
+        `);
+
+    } catch (err) {
+        console.error('Error verifying email:', err);
+        res.status(500).send('Email verification failed');
+    }
+});
+
+// RESEND VERIFICATION - Only for users who registered but never verified
+app.post('/resend-verification', [
+    body('email').isEmail().withMessage('Please provide a valid email address')
+        .normalizeEmail()
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email } = req.body;
+
+    try {
+        const result = await pool.query(
+            'SELECT id, username, "isEmailVerified" FROM users WHERE email = $1',
+            [email.toLowerCase()]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ 
+                error: 'Email not found',
+                message: 'No account found with this email address. Please register first.'
+            });
+        }
+
+        const user = result.rows[0];
+
+        if (user.isEmailVerified) {
+            return res.status(400).json({ 
+                error: 'Already verified',
+                message: 'This email is already verified. You can log in to your account.'
+            });
+        }
+
+        // Generate new verification token
+        const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+        const emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+        await pool.query(
+            'UPDATE users SET "emailVerificationToken" = $1, "emailVerificationExpires" = $2 WHERE email = $3',
+            [emailVerificationToken, emailVerificationExpires, email.toLowerCase()]
+        );
+
+        const emailSent = await sendVerificationEmail(email, emailVerificationToken, user.username);
+
+        if (!emailSent) {
+            return res.status(500).json({ 
+                error: 'Email send failed',
+                message: 'Could not send verification email. Please try again later.'
+            });
+        }
+
+        res.json({ 
+            message: 'Verification email sent successfully! Please check your inbox and spam folder.'
+        });
+
+    } catch (err) {
+        console.error('Error resending verification email:', err);
+        res.status(500).json({ 
+            error: 'Server error',
+            message: 'Could not resend verification email. Please try again later.'
+        });
     }
 });
 
 // Login route
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // Limit each IP to 10 login requests per windowMs
+    max: 5, // Limit each IP to 5 login requests per windowMs
     message: 'Too many login attempts, please try again later.'
 });
 app.post('/login', loginLimiter, (req, res, next) => {
     passport.authenticate('local', (err, user, info) => {
         if (err) { return next(err); }
-        if (!user) { return res.status(401).send('Incorrect username or password'); }
+        if (!user) { 
+            return res.status(401).json({ 
+                error: 'Invalid credentials',
+                message: 'Incorrect email/username or password'
+            }); 
+        }
+        
+        // Check if user has verified their email (from registration)
+        if (!user.isEmailVerified) {
+            return res.status(403).json({ 
+                error: 'Email not verified',
+                message: 'Please verify your email address before logging in. Check your inbox for the verification link.',
+                canResendVerification: true,
+                userEmail: user.email // So frontend can pre-fill resend form
+            });
+        }
+
+        // User is verified, allow login
         req.logIn(user, (err) => {
             if (err) { return next(err); }
-            res.json(user); // Send the user info including the role
+            res.json({
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+                profilePicture: user.profilePicture
+            });
         });
     })(req, res, next);
 });
@@ -509,6 +1036,22 @@ app.get('/current-user', async (req, res) => {
     } else {
         res.status(401).send('Not authenticated');
     }
+});
+
+// debug endpoint
+app.get('/debug/auth', (req, res) => {
+    console.log('Debug auth check:');
+    console.log('- req.isAuthenticated():', req.isAuthenticated());
+    console.log('- req.user:', req.user);
+    console.log('- req.session:', req.session);
+    console.log('- Session ID:', req.sessionID);
+    
+    res.json({
+        isAuthenticated: req.isAuthenticated(),
+        user: req.user || null,
+        sessionId: req.sessionID,
+        hasSession: !!req.session
+    });
 });
 
 // Seed admin username
