@@ -202,7 +202,7 @@ async function seedAdmin() {
   try {
     // Read admin username/password from environment variables
     const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'adminpassword';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'adminpassword2003';
 
     const result = await pool.query(
       'SELECT COUNT(*) AS count FROM users WHERE username = $1',
@@ -1048,30 +1048,36 @@ app.get('/current-user', async (req, res) => {
     }
 });
 
-// debug endpoint
-app.get('/debug/auth', (req, res) => {
-    console.log('Debug auth check:');
-    console.log('- req.isAuthenticated():', req.isAuthenticated());
-    console.log('- req.user:', req.user);
-    console.log('- req.session:', req.session);
-    console.log('- Session ID:', req.sessionID);
-    
-    res.json({
-        isAuthenticated: req.isAuthenticated(),
-        user: req.user || null,
-        sessionId: req.sessionID,
-        hasSession: !!req.session
-    });
-});
-
-// Seed admin username
-const seedAdminUsername = 'admin';
 
 // Seed admin check middleware
 const isSeedAdmin = (req, res, next) => {
-    if (req.isAuthenticated() && req.user.username === seedAdminUsername) return next();
+    console.log('isSeedAdmin check:', {
+        isAuthenticated: req.isAuthenticated(),
+        username: req.user?.username,
+        seedAdminUsername: seedAdminUsername,
+        adminUsernameEnv: process.env.ADMIN_USERNAME
+    });
+    
+    if (!req.isAuthenticated()) {
+        return res.status(401).send('Authentication required.');
+    }
+    
+    // Get the expected admin username from environment or default
+    const expectedAdminUsername = process.env.ADMIN_USERNAME || 'admin';
+    
+    // Check if current user matches the seed admin username
+    const isSeededAdmin = req.user.username === expectedAdminUsername;
+    
+    if (isSeededAdmin) {
+        return next();
+    }
+    
+    console.log(`Access denied - User "${req.user.username}" is not the seeded admin "${expectedAdminUsername}"`);
     res.status(403).send('Only the seeded admin can perform this action.');
 };
+
+// seedAdminUsername variable to use environment variable:
+const seedAdminUsername = process.env.ADMIN_USERNAME || 'admin';
 
 // Admin check middleware
 const isAdmin = (req, res, next) => {
