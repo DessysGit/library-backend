@@ -22,12 +22,43 @@ const http = require('http');
 const https = require('https');
 const url = require('url');
 
+// Automatic environment detection
+const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER || process.env.HEROKU;
+const isDevelopment = !isProduction;
+
+// Automatic URL detection
+const getBaseUrl = () => {
+  if (isProduction) {
+    // Use environment variable or fallback to your Render URL
+    return process.env.BACKEND_URL || 'https://library-backend-j90e.onrender.com';
+  } else {
+    // Local development
+    return `http://localhost:${process.env.PORT || 3000}`;
+  }
+};
+
+const getFrontendUrl = () => {
+  if (isProduction) {
+    // Use environment variable or fallback to your Netlify URL
+    return process.env.FRONTEND_URL || 'https://strong-paletas-464b32.netlify.app';
+  } else {
+    // Local development - adjust port if your frontend runs on different port
+    return process.env.FRONTEND_DEV_URL || 'http://localhost:3000';
+  }
+};
+
+const BACKEND_URL = getBaseUrl();
+const FRONTEND_URL = getFrontendUrl();
+
+console.log(`🌍 Environment: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
+console.log(`🔗 Backend URL: ${BACKEND_URL}`);
+console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const allowedOrigins = [
   'http://localhost:3000',
-  'http://localhost:5173',
   'https://strong-paletas-464b32.netlify.app'
 ];
 
@@ -167,37 +198,6 @@ async function ensureTables() {
     }
 }
 
-// Function to send verification email
-async function sendVerificationEmail(email, token) {
-    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${token}`;
-    
-    const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: 'Des2 Library - Verify Your Email',
-        html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #1DB954;">Welcome to Des2 Library!</h2>
-                <p>Thank you for registering. Please verify your email address by clicking the link below:</p>
-                <a href="${verificationUrl}" style="display: inline-block; background-color: #1DB954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 20px 0;">Verify Email</a>
-                <p>Or copy and paste this link in your browser:</p>
-                <p style="color: #666;">${verificationUrl}</p>
-                <p>This link will expire in 24 hours.</p>
-                <p>If you didn't create an account, you can safely ignore this email.</p>
-            </div>
-        `
-    };
-
-    try {
-        await transporter.sendMail(mailOptions);
-        return true;
-    } catch (error) {
-        console.error('Error sending verification email:', error);
-        return false;
-    }
-}
-
-
 async function seedAdmin() {
   try {
     // Read admin username/password from environment variables
@@ -314,12 +314,12 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false,                    // Set to false for local development
-    httpOnly: true,                   // Add this for security
-    maxAge: 24 * 60 * 60 * 1000,     // 24 hours
-    sameSite: 'lax'                   // Use 'lax' for local development
+    secure: isProduction, // Automatically secure in production
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: isProduction ? 'none' : 'lax' // Auto-adjust for environment
   },
-  name: 'sessionId'                   // Add explicit session name
+  name: 'sessionId'
 }));
 
 
@@ -498,7 +498,8 @@ function createVerificationEmailTemplate(verificationUrl, username = 'User') {
 
 // Function to send verification email using SendGrid
 async function sendVerificationEmail(email, token, username = 'User') {
-    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${token}`;
+    // Automatically use correct backend URL for verification
+    const verificationUrl = `${BACKEND_URL}/verify-email?token=${token}`;
     
     const msg = {
         to: email,
@@ -508,7 +509,6 @@ async function sendVerificationEmail(email, token, username = 'User') {
         },
         subject: 'Verify Your Email - Des2 Library',
         html: createVerificationEmailTemplate(verificationUrl, username),
-        // Fallback text version
         text: `
 Welcome to Des2 Library!
 
@@ -524,7 +524,6 @@ If you didn't create an account, you can safely ignore this email.
 Best regards,
 Des2 Library Team
         `.trim(),
-        // Optional: Add tracking and categories
         trackingSettings: {
             clickTracking: {
                 enable: true,
@@ -544,7 +543,6 @@ Des2 Library Team
     } catch (error) {
         console.error('SendGrid error:', error);
         
-        // Log more details about the error
         if (error.response) {
             console.error('SendGrid response body:', error.response.body);
         }
@@ -874,7 +872,7 @@ app.get('/verify-email', async (req, res) => {
                     <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
                         <h2 style="color: #dc3545;">Invalid or Expired Token</h2>
                         <p>The verification link is invalid, expired, or already used.</p>
-                        <a href="/index.html" style="color: #1DB954;">Return to Login</a>
+                        <a href="${FRONTEND_URL}" style="color: #1DB954;">Return to Login</a>
                     </body>
                 </html>
             `);
@@ -894,7 +892,7 @@ app.get('/verify-email', async (req, res) => {
                     <h2 style="color: #1DB954;">Email Verified Successfully!</h2>
                     <p>Welcome to Des2 Library, ${user.username}! Your email has been verified.</p>
                     <p>You can now log in to your account and start exploring our book collection.</p>
-                    <a href="/index.html" style="display: inline-block; background-color: #1DB954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 20px;">Go to Login</a>
+                    <a href="${FRONTEND_URL}" style="display: inline-block; background-color: #1DB954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 20px;">Go to Login</a>
                 </body>
             </html>
         `);
@@ -969,6 +967,15 @@ app.post('/resend-verification', [
         });
     }
 });
+
+// Update your Cloudinary usage detection
+const useCloudinary = isProduction || process.env.FORCE_CLOUDINARY === 'true';
+
+// Update file serving for development
+if (isDevelopment) {
+  const uploadDir = path.join(__dirname, 'uploads');
+  app.use('/uploads', express.static(uploadDir));
+}
 
 // Login route
 const loginLimiter = rateLimit({
