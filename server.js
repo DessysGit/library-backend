@@ -1310,8 +1310,8 @@ app.get('/users', isAdmin, async (req, res) => {
     res.json(result.rows);
 });
 
-// Delete a specific user (admin only)
-app.delete('/users/:id', isAdmin, async (req, res) => {
+// Delete a specific user (seeded admin only)
+app.delete('/users/:id', isSeedAdmin, async (req, res) => {
     const { id } = req.params;
     await pool.query('DELETE FROM users WHERE id = $1 AND role != $2', [id, 'admin']);
     res.send('User deleted successfully.');
