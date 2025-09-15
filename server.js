@@ -498,8 +498,11 @@ function createVerificationEmailTemplate(verificationUrl, username = 'User') {
 
 // Function to send verification email using SendGrid
 async function sendVerificationEmail(email, token, username = 'User') {
-    // Automatically use correct backend URL for verification
+    // IMPORTANT: Verification URL should ALWAYS point to the BACKEND, never frontend
     const verificationUrl = `${BACKEND_URL}/verify-email?token=${token}`;
+    
+    console.log(`📧 Sending verification email to ${email}`);
+    console.log(`🔗 Verification URL: ${verificationUrl}`);
     
     const msg = {
         to: email,
@@ -538,10 +541,10 @@ Des2 Library Team
 
     try {
         const response = await sgMail.send(msg);
-        console.log('Verification email sent successfully:', response[0].statusCode);
+        console.log('✅ Verification email sent successfully:', response[0].statusCode);
         return true;
     } catch (error) {
-        console.error('SendGrid error:', error);
+        console.error('❌ SendGrid error:', error);
         
         if (error.response) {
             console.error('SendGrid response body:', error.response.body);
