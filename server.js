@@ -158,7 +158,7 @@ async function ensureTables() {
                     likes INTEGER DEFAULT 0,
                     dislikes INTEGER DEFAULT 0,
                     summary TEXT,
-                    "averageRating" FLOAT DEFAULT 0
+                    averagerating FLOAT DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS likes (
@@ -236,6 +236,9 @@ async function seedAdmin() {
         console.log('🔄 Seeding admin user...');
         await seedAdmin();
         
+        console.log('🔄 Recalculating average ratings...');
+        await recalculateAverageRatings();
+        
         console.log('✅ Database setup completed successfully');
     } catch (error) {
         console.error('❌ Database setup failed:', error.message);
@@ -246,18 +249,22 @@ async function seedAdmin() {
 
 // Recalculate averageRating for all books
 const recalculateAverageRatings = async () => {
-    const booksResult = await pool.query('SELECT id FROM books');
-    const books = booksResult.rows;
+    try {
+        const booksResult = await pool.query('SELECT id FROM books');
+        const books = booksResult.rows;
+        let updated = 0;
 
-    for (const book of books) {
-        const row = await pool.query('SELECT AVG(rating) AS averageRating FROM reviews WHERE bookId = $1', [book.id]);
-        const averageRating = row.rows[0]?.averageRating || 0;
-        await pool.query('UPDATE books SET averageRating = $1 WHERE id = $2', [averageRating, book.id]);
+        for (const book of books) {
+            const row = await pool.query('SELECT AVG(rating) AS avg_rating FROM reviews WHERE bookid = $1', [book.id]);
+            const averageRating = parseFloat(row.rows[0]?.avg_rating) || 0;
+            await pool.query('UPDATE books SET averagerating = $1 WHERE id = $2', [averageRating, book.id]);
+            if (averageRating > 0) updated++;
+        }
+        console.log(`✅ Average ratings recalculated for ${books.length} books (${updated} with reviews)`);
+    } catch (err) {
+        console.error('❌ Error recalculating average ratings:', err.message);
     }
 };
-
-// Call the function during server startup
-recalculateAverageRatings();
 
 // Configure Passport.js for authentication
 passport.use(new LocalStrategy({
@@ -746,7 +753,8 @@ const count = countResult.rows[0].total;
 
 const booksWithAdminFlag = rows.map(book => ({
   ...book,
-  isAdmin: isAdmin
+  isAdmin: isAdmin,
+  averageRating: parseFloat(book.averagerating) || 0 // Map to camelCase for frontend
 }));
 
 
@@ -770,12 +778,19 @@ app.get('/books/:id', async (req, res) => {
   const bookId = req.params.id;
   try {
     const result = await pool.query(
-      'SELECT id, title, author, genres, summary, description, cover, file, averageRating, likes, dislikes FROM books WHERE id = $1',
+      'SELECT id, title, author, genres, summary, description, cover, file, averagerating, likes, dislikes FROM books WHERE id = $1',
       [bookId]
     );
     if (result.rows.length === 0) return res.status(404).send('Book not found');
-    res.json(result.rows[0]);
+    
+    // Map averagerating to averageRating for frontend compatibility
+    const book = result.rows[0];
+    book.averageRating = parseFloat(book.averagerating) || 0;
+    delete book.averagerating;
+    
+    res.json(book);
   } catch (err) {
+    console.error('Error fetching book details:', err);
     res.status(500).send('Failed to fetch book details');
   }
 });
@@ -1440,13 +1455,13 @@ app.post('/books/:id/reviews', isAuthenticated, async (req, res) => {
             [bookId, userId, username, text, rating]
         );
 
-        // Update average rating - also use lowercase column name
+        // Update average rating - use lowercase column name
         const ratingResult = await pool.query(
-            'SELECT AVG(rating) AS averagerating FROM reviews WHERE bookid = $1', 
+            'SELECT AVG(rating) AS avg_rating FROM reviews WHERE bookid = $1', 
             [bookId]
         );
-        const averageRating = parseFloat(ratingResult.rows[0]?.averagerating || 0);
-        
+        const averageRating = parseFloat(ratingResult.rows[0]?.avg_rating) || 0;
+
         await pool.query(
             'UPDATE books SET averagerating = $1 WHERE id = $2', 
             [averageRating, bookId]
