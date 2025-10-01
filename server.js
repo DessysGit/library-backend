@@ -144,6 +144,8 @@ async function ensureTables() {
                     "isEmailVerified" BOOLEAN DEFAULT FALSE,
                     "emailVerificationToken" TEXT,
                     "emailVerificationExpires" TIMESTAMP,
+                    "passwordResetToken" TEXT,
+                    "passwordResetExpires" TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -1478,6 +1480,398 @@ app.post('/books/:id/reviews', isAuthenticated, async (req, res) => {
         res.status(500).json({ error: 'Failed to submit review', details: err.message });
     }
 });
+
+// PASSWORD RESET REQUEST - Generates token and sends email
+app.post('/request-password-reset', [
+    body('email').isEmail().withMessage('Please provide a valid email address')
+        .normalizeEmail()
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email } = req.body;
+
+    try {
+        const result = await pool.query(
+            'SELECT id, username, email FROM users WHERE email = $1',
+            [email.toLowerCase()]
+        );
+
+        if (result.rows.length === 0) {
+            return res.json({ 
+                message: 'If an account with that email exists, a password reset link has been sent.'
+            });
+        }
+
+        const user = result.rows[0];
+
+        // Generate reset token
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const resetTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+        // Try BOTH column name variations to be safe
+        try {
+            await pool.query(
+                'UPDATE users SET "passwordResetToken" = $1, "passwordResetExpires" = $2 WHERE id = $3',
+                [resetToken, resetTokenExpires, user.id]
+            );
+        } catch {
+            await pool.query(
+                'UPDATE users SET passwordresettoken = $1, passwordresetexpires = $2 WHERE id = $3',
+                [resetToken, resetTokenExpires, user.id]
+            );
+        }
+
+        // Send reset email
+        const emailSent = await sendPasswordResetEmail(email, resetToken, user.username);
+
+        if (!emailSent) {
+            return res.status(500).json({ 
+                error: 'Failed to send reset email',
+                message: 'Could not send password reset email. Please try again later.'
+            });
+        }
+
+        res.json({ 
+            message: 'If an account with that email exists, a password reset link has been sent.'
+        });
+
+    } catch (err) {
+        console.error('❌ Error requesting password reset:', err);
+        res.status(500).json({ 
+            error: 'Server error',
+            message: 'Could not process password reset request. Please try again later.'
+        });
+    }
+});
+
+// VALIDATE RESET TOKEN - Check if token is valid before showing reset form
+app.get('/validate-reset-token/:token', async (req, res) => {
+    const { token } = req.params;
+
+    try {
+        // Try with quoted column names first
+        let result;
+        try {
+            result = await pool.query(
+                'SELECT id, "passwordResetToken", "passwordResetExpires" FROM users WHERE "passwordResetToken" = $1',
+                [token]
+            );
+        } catch {
+            result = await pool.query(
+                'SELECT id, passwordresettoken, passwordresetexpires FROM users WHERE passwordresettoken = $1',
+                [token]
+            );
+        }
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ 
+                valid: false,
+                message: 'Invalid or expired reset token'
+            });
+        }
+
+        const user = result.rows[0];
+        const expiresField = user.passwordResetExpires || user.passwordresetexpires;
+        const tokenExpires = new Date(expiresField);
+        const now = new Date();
+
+        if (tokenExpires <= now) {
+            return res.status(400).json({ 
+                valid: false,
+                message: 'This reset link has expired. Please request a new one.'
+            });
+        }
+
+        res.json({ valid: true });
+
+    } catch (err) {
+        console.error('❌ Error validating reset token:', err);
+        res.status(500).json({ 
+            valid: false,
+            message: 'Error validating token'
+        });
+    }
+});
+
+// RESET PASSWORD - Actually change the password
+app.post('/reset-password', [
+    body('token').notEmpty().withMessage('Reset token is required'),
+    body('newPassword').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { token, newPassword } = req.body;
+
+    try {
+        // IMPORTANT: Don't check expiration in SQL - do it in JavaScript
+        let result;
+        try {
+            result = await pool.query(
+                'SELECT id, "passwordResetToken", "passwordResetExpires" FROM users WHERE "passwordResetToken" = $1',
+                [token]
+            );
+        } catch {
+            result = await pool.query(
+                'SELECT id, passwordresettoken as "passwordResetToken", passwordresetexpires as "passwordResetExpires" FROM users WHERE passwordresettoken = $1',
+                [token]
+            );
+        }
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ 
+                error: 'Invalid token',
+                message: 'Invalid reset token. Please request a new password reset.'
+            });
+        }
+
+        const user = result.rows[0];
+
+        // Check expiration in JavaScript
+        const expirationTime = new Date(user.passwordResetExpires);
+        const currentTime = new Date();
+        
+        if (expirationTime <= currentTime) {
+            return res.status(400).json({ 
+                error: 'Expired token',
+                message: 'This reset link has expired. Please request a new password reset.'
+            });
+        }
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+        // Update password and clear reset token
+        try {
+            await pool.query(
+                'UPDATE users SET password = $1, "passwordResetToken" = NULL, "passwordResetExpires" = NULL WHERE id = $2',
+                [hashedPassword, user.id]
+            );
+        } catch {
+            await pool.query(
+                'UPDATE users SET password = $1, passwordresettoken = NULL, passwordresetexpires = NULL WHERE id = $2',
+                [hashedPassword, user.id]
+            );
+        }
+
+        res.json({ 
+            message: 'Password has been reset successfully. You can now log in with your new password.'
+        });
+
+    } catch (err) {
+        console.error('❌ Error resetting password:', err);
+        res.status(500).json({ 
+            error: 'Server error',
+            message: 'Could not reset password. Please try again later.'
+        });
+    }
+});
+
+
+// EMAIL TEMPLATE FUNCTION for password reset
+function createPasswordResetEmailTemplate(resetUrl, username = 'User') {
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Reset Your Password - Des2 Library</title>
+        <style>
+            body {
+                font-family: 'Arial', sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f4f4f4;
+            }
+            .container {
+                background-color: #ffffff;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 2px solid #dc3545;
+            }
+            .logo {
+                color: #dc3545;
+                font-size: 28px;
+                font-weight: bold;
+                margin: 0;
+            }
+            .tagline {
+                color: #666;
+                font-size: 16px;
+                margin: 5px 0 0 0;
+            }
+            .content {
+                margin: 30px 0;
+            }
+            .warning-text {
+                font-size: 18px;
+                color: #333;
+                margin-bottom: 20px;
+            }
+            .reset-button {
+                display: inline-block;
+                background: linear-gradient(45deg, #dc3545, #c82333);
+                color: white;
+                padding: 15px 30px;
+                text-decoration: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 16px;
+                margin: 20px 0;
+                transition: transform 0.3s ease;
+            }
+            .reset-button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
+            }
+            .url-text {
+                background-color: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                border-left: 4px solid #dc3545;
+                word-break: break-all;
+                font-family: 'Courier New', monospace;
+                font-size: 14px;
+                color: #666;
+                margin: 15px 0;
+            }
+            .footer {
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #eee;
+                text-align: center;
+                font-size: 14px;
+                color: #666;
+            }
+            .warning {
+                background-color: #fff3cd;
+                border: 1px solid #ffeaa7;
+                color: #856404;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 20px 0;
+            }
+            .security-notice {
+                background-color: #f8d7da;
+                border: 1px solid #f5c2c7;
+                color: #842029;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 20px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1 class="logo">Des2 Library</h1>
+                <p class="tagline">Password Reset Request</p>
+            </div>
+            
+            <div class="content">
+                <h2 style="color: #dc3545;">Reset Your Password</h2>
+                <p class="warning-text">Hello ${username},</p>
+                <p>We received a request to reset your password for your Des2 Library account. If you made this request, click the button below to reset your password:</p>
+                
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="${resetUrl}" class="reset-button">Reset My Password</a>
+                </div>
+                
+                <p>If the button above doesn't work, you can copy and paste this link into your browser:</p>
+                <div class="url-text">${resetUrl}</div>
+                
+                <div class="warning">
+                    <strong>Important:</strong> This password reset link will expire in 1 hour for security reasons.
+                </div>
+                
+                <div class="security-notice">
+                    <strong>Security Notice:</strong> If you didn't request a password reset, please ignore this email. Your password will remain unchanged. Someone may have entered your email address by mistake.
+                </div>
+            </div>
+            
+            <div class="footer">
+                <p>For security reasons, this link can only be used once.</p>
+                <p>Questions? Contact us at <a href="mailto:support@des2library.com" style="color: #dc3545;">support@des2library.com</a></p>
+                <p>&copy; 2025 Des2 Library. All rights reserved.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+}
+
+// SEND PASSWORD RESET EMAIL using SendGrid
+async function sendPasswordResetEmail(email, token, username = 'User') {
+    // Reset URL should point to FRONTEND with token
+    const resetUrl = `${FRONTEND_URL}/reset-password.html?token=${token}`;
+    
+    console.log(`📧 Sending password reset email to ${email}`);
+    console.log(`🔗 Reset URL: ${resetUrl}`);
+    
+    const msg = {
+        to: email,
+        from: {
+            email: process.env.SENDGRID_FROM_EMAIL,
+            name: 'Des2 Library'
+        },
+        subject: 'Reset Your Password - Des2 Library',
+        html: createPasswordResetEmailTemplate(resetUrl, username),
+        text: `
+Password Reset Request - Des2 Library
+
+Hello ${username},
+
+We received a request to reset your password. Click the link below to reset your password:
+${resetUrl}
+
+This link will expire in 1 hour.
+
+If you didn't request a password reset, you can safely ignore this email.
+
+Best regards,
+Des2 Library Team
+        `.trim(),
+        trackingSettings: {
+            clickTracking: {
+                enable: true,
+                enableText: false
+            },
+            openTracking: {
+                enable: true
+            }
+        },
+        categories: ['password-reset']
+    };
+
+    try {
+        const response = await sgMail.send(msg);
+        console.log('✅ Password reset email sent successfully:', response[0].statusCode);
+        return true;
+    } catch (error) {
+        console.error('❌ SendGrid error:', error);
+        
+        if (error.response) {
+            console.error('SendGrid response body:', error.response.body);
+        }
+        
+        return false;
+    }
+}
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
