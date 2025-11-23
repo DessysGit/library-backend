@@ -1,3 +1,13 @@
+/**
+ * Email Service using Resend (FREE - 3,000 emails/month)
+ * 
+ * Setup:
+ * 1. Sign up at https://resend.com/
+ * 2. Get API key
+ * 3. npm install resend
+ * 4. Set RESEND_API_KEY and EMAIL_FROM in .env
+ */
+
 const { Resend } = require('resend');
 const { BACKEND_URL, FRONTEND_URL } = require('../config/environment');
 
