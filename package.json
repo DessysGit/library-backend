@@ -9,7 +9,11 @@
     "test:connection": "node check-database.js",
     "diagnose": "node diagnose-connection.js",
     "connection-guide": "node connection-guide.js",
-    "fix-database": "node connection-guide.js && node diagnose-connection.js"
+    "fix-database": "node connection-guide.js && node diagnose-connection.js",
+    "verify-production": "node verify-production.js",
+    "fix-cloudinary": "node fix-cloudinary-urls.js",
+    "test-deployment": "node test-deployment.js",
+    "test-email": "node test-email.js"
   },
   "keywords": [],
   "author": "",
@@ -21,7 +25,7 @@
     "bcryptjs": "^2.4.3",
     "body-parser": "^1.11.0",
     "buffer-crc32": "^1.0.0",
-    "cloudinary": "^1.41.3",
+    "cloudinary": "^2.8.0",
     "connect-pg-simple": "^10.0.0",
     "connect-sqlite3": "^0.9.16",
     "cors": "^2.8.5",
@@ -40,6 +44,7 @@
     "passport-local": "^1.0.0",
     "pg": "^8.16.3",
     "python-shell": "^5.0.0",
+    "resend": "^6.5.2",
     "sqlite3": "^5.0.2",
     "streamifier": "^0.1.1",
     "uid2": "^1.0.0"
