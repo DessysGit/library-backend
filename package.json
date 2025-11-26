@@ -13,7 +13,9 @@
     "verify-production": "node verify-production.js",
     "fix-cloudinary": "node fix-cloudinary-urls.js",
     "test-deployment": "node test-deployment.js",
-    "test-email": "node test-email.js"
+    "test-email": "node test-email.js",
+    "test-dashboard": "node test-dashboard.js",
+    "add-timestamps": "node add-timestamps.js"
   },
   "keywords": [],
   "author": "",
