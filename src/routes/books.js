@@ -8,7 +8,14 @@ const { isCloudProduction } = require('../config/environment');
 const fs = require('fs');
 const path = require('path');
 
-const upload = multer({ storage: multer.memoryStorage() });
+// Configure multer with memory storage and file size limits
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB max file size
+  }
+});
+const { deleteCoverFromCloudinary, deletePdfFromCloudinary } = require('../utils/cloudinaryHelpers');
 
 // Get all books with filters and pagination
 router.get('/', async (req, res) => {
@@ -170,20 +177,145 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
   }
 });
 
-// Update book (Admin only)
-router.put('/:id', isAdmin, async (req, res) => {
+// Update book (Admin only) - with file upload and old file deletion
+router.put('/:id', isAdmin, (req, res, next) => {
+  // Use multer conditionally
+  const uploadMiddleware = upload.any();
+  uploadMiddleware(req, res, (err) => {
+    if (err) {
+      console.error('❌ Multer error:', err);
+      return res.status(400).json({ error: 'File upload error', details: err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
   const bookId = req.params.id;
-  const { title, author, genres, summary, description } = req.body;
+  
   try {
+    // Safely access req.body with defaults
+    const title = (req.body && req.body.title) ? req.body.title.trim() : '';
+    const author = (req.body && req.body.author) ? req.body.author.trim() : '';
+    const description = (req.body && req.body.description) ? req.body.description.trim() : '';
+    let genres = (req.body && req.body.genres) ? req.body.genres.trim() : '';
+    
+    // Validate required fields
+    if (!title || !author) {
+      return res.status(400).json({ error: 'Title and Author are required fields' });
+    }
+    
+    // Get current book data
+    const currentBook = await pool.query('SELECT * FROM books WHERE id = $1', [bookId]);
+    if (currentBook.rows.length === 0) {
+      return res.status(404).json({ error: 'Book not found' });
+    }
+    
+    const existingBook = currentBook.rows[0];
+    let coverUrl = existingBook.cover;
+    let pdfUrl = existingBook.file;
+    
+    // Handle genres
+    if (genres) {
+      try {
+        genres = JSON.parse(genres);
+        if (Array.isArray(genres)) {
+          genres = genres.join(', ');
+        }
+      } catch (e) {
+        // Keep as is if not JSON
+      }
+    } else {
+      genres = existingBook.genres;
+    }
+    
+    // Find uploaded files by fieldname
+    const coverFile = req.files ? req.files.find(f => f.fieldname === 'cover') : null;
+    const pdfFile = req.files ? req.files.find(f => f.fieldname === 'bookFile') : null;
+    
+    // Handle file uploads
+    if (isCloudProduction) {
+      // Upload new cover to Cloudinary if provided
+      if (coverFile) {
+        // Delete old cover first
+        if (existingBook.cover) {
+          await deleteCoverFromCloudinary(existingBook.cover);
+        }
+        
+        const coverBuffer = coverFile.buffer;
+        coverUrl = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: 'book-covers' },
+            (error, result) => error ? reject(error) : resolve(result.secure_url)
+          );
+          stream.end(coverBuffer);
+        });
+      }
+
+      // Upload new PDF to Cloudinary if provided
+      if (pdfFile) {
+        // Delete old PDF first
+        if (existingBook.file) {
+          await deletePdfFromCloudinary(existingBook.file);
+        }
+        
+        const pdfBuffer = pdfFile.buffer;
+        pdfUrl = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { 
+              folder: 'book-pdfs', 
+              resource_type: 'raw', 
+              use_filename: true, 
+              unique_filename: true
+            },
+            (error, result) => error ? reject(error) : resolve(result.secure_url)
+          );
+          stream.end(pdfBuffer);
+        });
+      }
+    } else {
+      // Save locally in development
+      const uploadDir = path.join(__dirname, '../../uploads');
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+      if (coverFile) {
+        // Delete old local cover if exists
+        if (existingBook.cover && existingBook.cover.startsWith('/uploads/')) {
+          const oldPath = path.join(__dirname, '../../', existingBook.cover);
+          if (fs.existsSync(oldPath)) {
+            fs.unlinkSync(oldPath);
+          }
+        }
+        
+        const coverPath = path.join(uploadDir, Date.now() + '-' + coverFile.originalname);
+        fs.writeFileSync(coverPath, coverFile.buffer);
+        coverUrl = `/uploads/${path.basename(coverPath)}`;
+      }
+      
+      if (pdfFile) {
+        // Delete old local PDF if exists
+        if (existingBook.file && existingBook.file.startsWith('/uploads/')) {
+          const oldPath = path.join(__dirname, '../../', existingBook.file);
+          if (fs.existsSync(oldPath)) {
+            fs.unlinkSync(oldPath);
+          }
+        }
+        
+        const bookPath = path.join(uploadDir, Date.now() + '-' + pdfFile.originalname);
+        fs.writeFileSync(bookPath, pdfFile.buffer);
+        pdfUrl = `/uploads/${path.basename(bookPath)}`;
+      }
+    }
+    
+    // Update book in database
     await pool.query(
-      'UPDATE books SET title = $1, author = $2, genres = $3, summary = $4, description = $5 WHERE id = $6',
-      [title, author, genres, summary, description, bookId]
+      'UPDATE books SET title = $1, author = $2, genres = $3, description = $4, cover = $5, file = $6 WHERE id = $7',
+      [title, author, genres, description, coverUrl, pdfUrl, bookId]
     );
+    
     const updatedBook = await pool.query('SELECT * FROM books WHERE id = $1', [bookId]);
     res.json(updatedBook.rows[0]);
   } catch (err) {
     console.error('Error editing book:', err);
-    res.status(500).send('Failed to edit book');
+    res.status(500).json({ error: 'Failed to edit book', details: err.message });
   }
 });
 
@@ -198,14 +330,27 @@ router.delete('/:id', isAdmin, async (req, res) => {
     const { cover, file } = row.rows[0];
 
     // Delete from Cloudinary if applicable
-    if (cover && cover.includes('cloudinary.com')) {
-      const publicId = cover.split('/').slice(-1)[0].split('.')[0];
-      await cloudinary.uploader.destroy(`book-covers/${publicId}`);
+    if (cover) {
+      await deleteCoverFromCloudinary(cover);
     }
 
-    if (file && file.includes('cloudinary.com')) {
-      const publicId = file.split('/').slice(-1)[0].split('.')[0];
-      await cloudinary.uploader.destroy(`book-pdfs/${publicId}`, { resource_type: 'raw' });
+    if (file) {
+      await deletePdfFromCloudinary(file);
+    }
+    
+    // Delete from local storage if applicable
+    if (cover && cover.startsWith('/uploads/')) {
+      const coverPath = path.join(__dirname, '../../', cover);
+      if (fs.existsSync(coverPath)) {
+        fs.unlinkSync(coverPath);
+      }
+    }
+    
+    if (file && file.startsWith('/uploads/')) {
+      const filePath = path.join(__dirname, '../../', file);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
     }
 
     await pool.query('DELETE FROM books WHERE id = $1', [bookId]);
