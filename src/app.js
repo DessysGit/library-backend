@@ -146,6 +146,7 @@ const recommendationsRoutes = require('./routes/recommendations'); // AI recomme
 const newsletterRoutes = require('./routes/newsletter');      // Newsletter subscription
 const downloadRoutes = require('./routes/download');          // File downloads
 const chatbotRoutes = require('./routes/chatbot');           // AI chatbot
+const analyticsRoutes = require('./routes/analytics');        // Admin analytics
 
 // ============================================
 // REGISTER ROUTES
@@ -170,6 +171,7 @@ app.use('/recommendations', recommendationsRoutes); // Recommendation endpoints
 app.use('/', newsletterRoutes);                    // Newsletter at root level
 app.use('/download', downloadRoutes);              // Download endpoints: /download/*
 app.use('/api', chatbotRoutes);                    // Chatbot endpoints: /api/*
+app.use('/analytics', analyticsRoutes);            // Analytics endpoints: /analytics/*
 
 // ============================================
 // HEALTH CHECK ENDPOINTS
