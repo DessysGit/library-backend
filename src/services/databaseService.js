@@ -16,9 +16,6 @@ async function seedAdmin() {
         'INSERT INTO users (username, password, role) VALUES ($1, $2, $3)',
         [ADMIN_USERNAME, hashedPassword, 'admin']
       );
-      console.log('✅ Admin user seeded successfully.');
-    } else {
-      console.log('ℹ️ Admin user already exists.');
     }
   } catch (err) {
     console.error("❌ Error seeding admin user:", err);
@@ -44,7 +41,6 @@ async function recalculateAverageRatings() {
       );
       if (averageRating > 0) updated++;
     }
-    console.log(`✅ Average ratings recalculated for ${books.length} books (${updated} with reviews)`);
   } catch (err) {
     console.error('❌ Error recalculating average ratings:', err.message);
   }
