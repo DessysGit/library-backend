@@ -71,8 +71,7 @@ async function testConnection() {
     let client;
     try {
       client = await pool.connect();
-      const result = await client.query('SELECT NOW()');
-      console.log('✅ Database connected successfully');
+      const result = await client.query('SELECT NOW()');      
       client.release();
       return true;
     } catch (err) {
@@ -106,7 +105,6 @@ async function ensureTables() {
       // Use direct pool for DDL operations
       client = await directPool.connect();
       
-      console.log('  Creating users table...');
       await client.query(`
         CREATE TABLE IF NOT EXISTS users (
           id SERIAL PRIMARY KEY,
@@ -127,7 +125,6 @@ async function ensureTables() {
         )
       `);
       
-      console.log('  Creating books table...');
       await client.query(`
         CREATE TABLE IF NOT EXISTS books (
           id SERIAL PRIMARY KEY,
@@ -144,7 +141,6 @@ async function ensureTables() {
         )
       `);
       
-      console.log('  Creating likes table...');
       await client.query(`
         CREATE TABLE IF NOT EXISTS likes (
           id SERIAL PRIMARY KEY,
@@ -155,7 +151,6 @@ async function ensureTables() {
         )
       `);
       
-      console.log('  Creating reviews table...');
       await client.query(`
         CREATE TABLE IF NOT EXISTS reviews (
           id SERIAL PRIMARY KEY,
@@ -168,7 +163,6 @@ async function ensureTables() {
       `);
       
       client.release();
-      console.log("✅ Tables ensured successfully");
       return;
       
     } catch (err) {
@@ -185,7 +179,6 @@ async function ensureTables() {
       
       // If it's a "relation already exists" error, that's actually fine
       if (err.message.includes('already exists')) {
-        console.log('✅ Tables already exist');
         return;
       }
       
@@ -211,7 +204,6 @@ async function closePool() {
       pool.end(),
       directPool.end()
     ]);
-    console.log('✅ Database pools closed');
   } catch (err) {
     console.error('❌ Error closing database pools:', err.message);
   }
