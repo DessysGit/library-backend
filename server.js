@@ -56,25 +56,19 @@ function startServer(limited = false) {
  */
 async function initialize() {
   try {
-    // Step 1: Test database connection
-    console.log('🔄 Testing database connection...');
+    // Test database connection silently
     await testConnection();
     
-    // Step 2: Create database tables if they don't exist
-    console.log('🔄 Ensuring database tables...');
+    // Create database tables if they don't exist
     await ensureTables();
     
-    // Step 3: Create default admin user if doesn't exist
-    console.log('🔄 Seeding admin user...');
+    // Create default admin user if doesn't exist
     await seedAdmin();
     
-    // Step 4: Update average ratings for all books
-    console.log('🔄 Recalculating average ratings...');
+    // Update average ratings for all books
     await recalculateAverageRatings();
     
-    console.log('✅ Database setup completed successfully');
-    
-    // Step 5: Start the Express server
+    // Start the Express server
     startServer(false);
     
   } catch (error) {
