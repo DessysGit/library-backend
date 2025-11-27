@@ -24,7 +24,7 @@ router.get('/', isAuthenticated, async (req, res) => {
       return res.json({ recommendations: filteredRecommendations });
     }
   } catch (error) {
-    console.error("Flask service not available, running recommend.py directly.");
+    console.error("Flask service not available:", error.message);
 
     // Run Python script directly
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';

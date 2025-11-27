@@ -29,7 +29,6 @@ router.get('/:bookId/reviews', async (req, res) => {
       ...row,
       profilepicture: row.profilepicture || ''
     }));
-    console.log(`Fetched ${reviews.length} reviews for book ${bookId}`);
     res.json(reviews);
   } catch (err) {
     console.error('Error fetching reviews:', err);
@@ -66,7 +65,6 @@ router.post('/:bookId/reviews', isAuthenticated, async (req, res) => {
       [averageRating, bookId]
     );
 
-    console.log(`Review submitted for book ${bookId} by user ${username}`);
     res.status(201).json({ 
       message: 'Review added successfully', 
       averageRating: averageRating 
