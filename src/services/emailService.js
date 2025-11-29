@@ -1,8 +1,36 @@
-const { Resend } = require('resend');
+/**
+ * Email Service using Gmail SMTP (100% FREE)
+ * 
+ * Setup:
+ * 1. Go to https://myaccount.google.com/security
+ * 2. Enable 2-Step Verification
+ * 3. Generate App Password for Mail
+ * 4. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env
+ * 
+ * Note: Nodemailer is already installed in your project
+ */
+
+const nodemailer = require('nodemailer');
 const { BACKEND_URL, FRONTEND_URL } = require('../config/environment');
 
-// Initialize Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Create transporter using Gmail
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD
+  }
+});
+
+// Verify connection on startup
+transporter.verify((error, success) => {
+  if (error) {
+    console.error('❌ Gmail SMTP connection error:', error);
+    console.error('   Make sure you have set GMAIL_USER and GMAIL_APP_PASSWORD in .env');
+  } else {
+    console.log('✅ Gmail SMTP server is ready to send emails');
+  }
+});
 
 // Email template for verification
 function createVerificationEmailTemplate(verificationUrl, username = 'User') {
@@ -178,26 +206,23 @@ function createPasswordResetEmailTemplate(resetUrl, username = 'User') {
 async function sendVerificationEmail(email, token, username = 'User') {
   const verificationUrl = `${BACKEND_URL}/verify-email?token=${token}`;
   
-  console.log(`📧 Sending verification email to ${email} via Resend`);
+  console.log(`📧 Sending verification email to ${email} via Gmail`);
   console.log(`🔗 Verification URL: ${verificationUrl}`);
   
+  const mailOptions = {
+    from: `"Des2 Library" <${process.env.GMAIL_USER}>`,
+    to: email,
+    subject: 'Verify Your Email - Des2 Library',
+    html: createVerificationEmailTemplate(verificationUrl, username),
+    text: `Welcome to Des2 Library!\n\nHello ${username},\n\nPlease verify your email: ${verificationUrl}\n\nThis link expires in 24 hours.`
+  };
+
   try {
-    const { data, error } = await resend.emails.send({
-      from: `Des2 Library <${process.env.EMAIL_FROM || 'onboarding@resend.dev'}>`,
-      to: [email],
-      subject: 'Verify Your Email - Des2 Library',
-      html: createVerificationEmailTemplate(verificationUrl, username)
-    });
-
-    if (error) {
-      console.error('❌ Resend error:', error);
-      return false;
-    }
-
-    console.log('✅ Verification email sent successfully via Resend:', data.id);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('✅ Verification email sent successfully via Gmail:', info.messageId);
     return true;
   } catch (error) {
-    console.error('❌ Error sending email:', error);
+    console.error('❌ Gmail error:', error);
     return false;
   }
 }
@@ -206,26 +231,23 @@ async function sendVerificationEmail(email, token, username = 'User') {
 async function sendPasswordResetEmail(email, token, username = 'User') {
   const resetUrl = `${FRONTEND_URL}/reset-password.html?token=${token}`;
   
-  console.log(`📧 Sending password reset email to ${email} via Resend`);
+  console.log(`📧 Sending password reset email to ${email} via Gmail`);
   console.log(`🔗 Reset URL: ${resetUrl}`);
   
+  const mailOptions = {
+    from: `"Des2 Library" <${process.env.GMAIL_USER}>`,
+    to: email,
+    subject: 'Reset Your Password - Des2 Library',
+    html: createPasswordResetEmailTemplate(resetUrl, username),
+    text: `Password Reset Request\n\nHello ${username},\n\nReset your password: ${resetUrl}\n\nThis link expires in 1 hour.`
+  };
+
   try {
-    const { data, error } = await resend.emails.send({
-      from: `Des2 Library <${process.env.EMAIL_FROM || 'onboarding@resend.dev'}>`,
-      to: [email],
-      subject: 'Reset Your Password - Des2 Library',
-      html: createPasswordResetEmailTemplate(resetUrl, username)
-    });
-
-    if (error) {
-      console.error('❌ Resend error:', error);
-      return false;
-    }
-
-    console.log('✅ Password reset email sent successfully via Resend:', data.id);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('✅ Password reset email sent successfully via Gmail:', info.messageId);
     return true;
   } catch (error) {
-    console.error('❌ Error sending email:', error);
+    console.error('❌ Gmail error:', error);
     return false;
   }
 }
