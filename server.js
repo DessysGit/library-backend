@@ -14,6 +14,22 @@
 // Load environment variables from .env file
 require('dotenv').config();
 
+// Try to load logger, fallback to console if winston not installed
+let logger;
+try {
+  logger = require('./src/config/logger');
+} catch (error) {
+  console.log('⚠️  Winston not installed, using console logging');
+  console.log('💡 Run "npm install winston" to enable structured logging');
+  // Fallback logger
+  logger = {
+    info: console.log,
+    error: console.error,
+    warn: console.warn,
+    debug: console.log
+  };
+}
+
 // Import the Express application
 const app = require('./src/app');
 
@@ -34,7 +50,7 @@ let serverStarted = false;
  */
 function startServer(limited = false) {
   if (serverStarted) {
-    console.log('⚠️  Server already started, skipping duplicate start');
+    logger.warn('Server already started, skipping duplicate start');
     return;
   }
   
@@ -42,11 +58,11 @@ function startServer(limited = false) {
   
   app.listen(PORT, () => {
     if (limited) {
-      console.log(`🚀 Server is running on port ${PORT} (with limited database functionality)`);
+      logger.warn(`Server is running on port ${PORT} (with limited database functionality)`);
     } else {
-      console.log(`🚀 Server is running on port ${PORT}`);
+      logger.info(`Server is running on port ${PORT}`);
     }
-    console.log(`📍 Local: http://localhost:${PORT}`);
+    logger.info(`Local: http://localhost:${PORT}`);
   });
 }
 
@@ -56,26 +72,34 @@ function startServer(limited = false) {
  */
 async function initialize() {
   try {
+    logger.info('Starting server initialization...');
+    
     // Test database connection silently
     await testConnection();
+    logger.info('Database connection successful');
     
     // Create database tables if they don't exist
     await ensureTables();
+    logger.info('Database tables verified');
     
     // Create default admin user if doesn't exist
     await seedAdmin();
+    logger.info('Admin user verified');
     
     // Update average ratings for all books
     await recalculateAverageRatings();
+    logger.info('Book ratings recalculated');
     
     // Start the Express server
     startServer(false);
     
   } catch (error) {
     // If setup fails, log error but still start server
-    console.error('❌ Database setup failed:', error.message);
-    console.error('   Error details:', error.code || 'Unknown error code');
-    console.log('⚠️  Server will continue to run, but database functionality may be limited');
+    logger.error('Database setup failed', {
+      error: error.message,
+      code: error.code || 'Unknown error code'
+    });
+    logger.warn('Server will continue to run, but database functionality may be limited');
     
     // Start server anyway to allow debugging
     startServer(true);
@@ -84,30 +108,41 @@ async function initialize() {
 
 // Prevent server crash on unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Promise Rejection:', reason);
-  console.error('   Promise:', promise);
+  logger.error('Unhandled Promise Rejection', {
+    reason: reason,
+    promise: promise
+  });
   // Don't exit the process, just log it
 });
 
 // Prevent server crash on uncaught exceptions
 process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
-  console.error('   Stack:', err.stack);
+  logger.error('Uncaught Exception', {
+    error: err.message,
+    stack: err.stack,
+    code: err.code
+  });
+  
   // Don't exit the process for database connection errors
   if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT') {
-    console.log('⚠️  Database connection error, but server will continue');
+    logger.warn('Database connection error, but server will continue');
+  } else {
+    // For other critical errors, exit after logging
+    setTimeout(() => {
+      process.exit(1);
+    }, 1000);
   }
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n🛑 Shutting down gracefully...');
+  logger.info('Shutting down gracefully (SIGINT)...');
   await closePool();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('\n🛑 Shutting down gracefully...');
+  logger.info('Shutting down gracefully (SIGTERM)...');
   await closePool();
   process.exit(0);
 });
