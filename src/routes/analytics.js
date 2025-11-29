@@ -2,7 +2,7 @@
  * Admin Analytics Routes
  * 
  * Provides statistics and analytics for admin dashboard
- * Fixed to use correct lowercase column names
+ * Uses public.users explicitly to avoid schema conflicts
  */
 
 const express = require('express');
@@ -15,22 +15,21 @@ router.get('/stats', isAdmin, async (req, res) => {
   try {
     // Total counts
     const [users, books, reviews] = await Promise.all([
-      pool.query('SELECT COUNT(*) as count FROM users'),
+      pool.query('SELECT COUNT(*) as count FROM public.users'),
       pool.query('SELECT COUNT(*) as count FROM books'),
       pool.query('SELECT COUNT(*) as count FROM reviews')
     ]);
 
-    // Recent registrations (last 30 days) - only if created_at exists
+    // Recent registrations (last 30 days)
     let recentUsers = { rows: [{ count: 0 }] };
     try {
       recentUsers = await pool.query(`
         SELECT COUNT(*) as count 
-        FROM users 
+        FROM public.users 
         WHERE created_at >= NOW() - INTERVAL '30 days'
       `);
     } catch (err) {
-      // Column doesn't exist, just use 0
-      console.log('Note: created_at column not found in users table');
+      console.log('Note: Could not fetch recent users count');
     }
 
     // Average rating
@@ -117,27 +116,20 @@ router.get('/genre-stats', isAdmin, async (req, res) => {
 // Get user activity (registrations over time)
 router.get('/user-activity', isAdmin, async (req, res) => {
   try {
-    // Try to get activity data if created_at column exists
-    try {
-      const activity = await pool.query(`
-        SELECT 
-          DATE(created_at) as date,
-          COUNT(*) as count
-        FROM users
-        WHERE created_at >= NOW() - INTERVAL '30 days'
-        GROUP BY DATE(created_at)
-        ORDER BY date ASC
-      `);
+    const activity = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as count
+      FROM public.users
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `);
 
-      res.json(activity.rows.map(row => ({
-        date: row.date,
-        count: parseInt(row.count)
-      })));
-    } catch (err) {
-      // Column doesn't exist, return empty array
-      console.log('Note: created_at not available for users');
-      res.json([]);
-    }
+    res.json(activity.rows.map(row => ({
+      date: row.date,
+      count: parseInt(row.count)
+    })));
   } catch (error) {
     console.error('Error fetching user activity:', error);
     res.json([]);
@@ -162,7 +154,7 @@ router.get('/recent-activity', isAdmin, async (req, res) => {
       LIMIT 5
     `);
 
-    // Get recent users (if created_at exists)
+    // Get recent users
     let recentUsers = { rows: [] };
     try {
       recentUsers = await pool.query(`
@@ -172,25 +164,25 @@ router.get('/recent-activity', isAdmin, async (req, res) => {
           email,
           created_at,
           'user' as type
-        FROM users
+        FROM public.users
         ORDER BY created_at DESC
         LIMIT 5
       `);
     } catch (err) {
-      console.log('Note: created_at not available for users');
+      console.log('Note: Could not fetch recent users');
     }
 
-    // Combine activities - sort by id if no timestamp
+    // Combine activities
     const allActivity = [
       ...recentReviews.rows.map(r => ({
         ...r,
-        createdAt: new Date() // Use current time as placeholder
+        createdAt: new Date() // Reviews don't have timestamps yet
       })),
       ...recentUsers.rows.map(u => ({
         ...u,
         createdAt: u.created_at || new Date()
       }))
-    ].slice(0, 10);
+    ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 10);
 
     res.json(allActivity);
   } catch (error) {
@@ -209,7 +201,7 @@ router.get('/top-reviewers', isAdmin, async (req, res) => {
         u.email,
         COUNT(r.id) as review_count,
         COALESCE(AVG(r.rating)::numeric(10,2), 0) as avg_rating
-      FROM users u
+      FROM public.users u
       JOIN reviews r ON u.id = r.userid
       GROUP BY u.id, u.username, u.email
       ORDER BY review_count DESC
