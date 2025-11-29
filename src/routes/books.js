@@ -7,15 +7,23 @@ const cloudinary = require('../config/cloudinary');
 const { isCloudProduction } = require('../config/environment');
 const fs = require('fs');
 const path = require('path');
+const { 
+  combinedFileFilter, 
+  validateFileSize, 
+  sanitizeFilename,
+  ALLOWED_FILE_TYPES 
+} = require('../utils/fileValidation');
+const { deleteCoverFromCloudinary, deletePdfFromCloudinary } = require('../utils/cloudinaryHelpers');
 
-// Configure multer with memory storage and file size limits
+// Configure multer with memory storage, file validation, and size limits
 const upload = multer({ 
   storage: multer.memoryStorage(),
+  fileFilter: combinedFileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB max file size
+    fileSize: 50 * 1024 * 1024, // 50MB max file size (for PDFs)
+    files: 2 // Maximum 2 files (cover + pdf)
   }
 });
-const { deleteCoverFromCloudinary, deletePdfFromCloudinary } = require('../utils/cloudinaryHelpers');
 
 // Get all books with filters and pagination
 router.get('/', async (req, res) => {
