@@ -15,7 +15,10 @@
     "test-deployment": "node test-deployment.js",
     "test-email": "node test-email.js",
     "test-dashboard": "node test-dashboard.js",
-    "add-timestamps": "node add-timestamps.js"
+    "add-timestamps": "node add-timestamps.js",
+    "migrate": "node migrations/add-created-at-to-public-users.js",
+    "migrate:old": "node migrations/run-migrations.js",
+    "migrate:single": "node migrations/add-created-at-column.js"
   },
   "keywords": [],
   "author": "",
