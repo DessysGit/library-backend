@@ -11,8 +11,8 @@
  * The actual Express app configuration is in src/app.js
  */
 
-// Load environment variables from .env file
-require('dotenv').config();
+// Load environment variables from .env file (quietly)
+require('dotenv').config({ quiet: true });
 
 // Try to load logger, fallback to console if winston not installed
 let logger;
