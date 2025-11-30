@@ -149,6 +149,23 @@ if (isDevelopment) {
 }
 
 // ============================================
+// REQUEST LOGGING
+// ============================================
+
+/**
+ * HTTP Request Logging
+ * Logs all incoming requests with method, path, status, and timing
+ * Only active if Winston logger is available
+ */
+try {
+  const { requestLoggerWithSkip } = require('./middleware/requestLogger');
+  app.use(requestLoggerWithSkip);
+  console.log('✅ Request logging enabled');
+} catch (error) {
+  console.log('⚠️  Request logging disabled (Winston not installed)');
+}
+
+// ============================================
 // IMPORT ROUTE HANDLERS
 // ============================================
 
