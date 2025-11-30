@@ -10,6 +10,20 @@
 
 const { Pool } = require('pg');
 
+// Import logger
+let logger;
+try {
+  logger = require('./logger');
+} catch (error) {
+  // Fallback to console if logger not available
+  logger = {
+    info: console.log,
+    error: console.error,
+    warn: console.warn,
+    debug: console.log
+  };
+}
+
 // ============================================
 // DATABASE CONNECTION POOLS
 // ============================================
@@ -52,11 +66,11 @@ const directPool = new Pool({
  * Handle unexpected database errors
  */
 pool.on("error", (err) => {
-  console.error("Main pool error:", err.message);
+  logger.error('Database pool error', { error: err.message });
 });
 
 directPool.on("error", (err) => {
-  console.error("Direct pool error:", err.message);
+  logger.error('Direct pool error', { error: err.message });
 });
 
 // ============================================
@@ -80,7 +94,11 @@ async function testConnection() {
       }
       
       retries++;
-      console.error(`❌ Connection attempt ${retries} failed:`, err.message);
+      logger.error('Database connection failed', { 
+        attempt: retries, 
+        maxRetries, 
+        error: err.message 
+      });
       
       if (retries === maxRetries) {
         throw err;
@@ -175,10 +193,15 @@ async function ensureTables() {
       }
       
       retries++;
-      console.error(`❌ Table creation attempt ${retries} failed:`, err.message);
+      logger.error('Table creation failed', { 
+        attempt: retries, 
+        maxRetries, 
+        error: err.message 
+      });
       
       // If it's a "relation already exists" error, that's actually fine
       if (err.message.includes('already exists')) {
+        logger.info('Database tables already exist');
         return;
       }
       
@@ -200,12 +223,14 @@ async function ensureTables() {
  */
 async function closePool() {
   try {
+    logger.info('Closing database connections');
     await Promise.all([
       pool.end(),
       directPool.end()
     ]);
+    logger.info('Database connections closed successfully');
   } catch (err) {
-    console.error('❌ Error closing database pools:', err.message);
+    logger.error('Error closing database pools', { error: err.message });
   }
 }
 

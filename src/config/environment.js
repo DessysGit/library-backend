@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 // Environment detection
 const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER || process.env.HEROKU;
