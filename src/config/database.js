@@ -235,14 +235,22 @@ async function closePool() {
 }
 
 // Handle process termination
+let isShuttingDown = false;
+
 process.on('SIGINT', async () => {
-  await closePool();
-  process.exit(0);
+  if (!isShuttingDown) {
+    isShuttingDown = true;
+    await closePool();
+    process.exit(0);
+  }
 });
 
 process.on('SIGTERM', async () => {
-  await closePool();
-  process.exit(0);
+  if (!isShuttingDown) {
+    isShuttingDown = true;
+    await closePool();
+    process.exit(0);
+  }
 });
 
 module.exports = {
