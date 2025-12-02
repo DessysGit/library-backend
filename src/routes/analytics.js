@@ -1,8 +1,8 @@
 /**
- * Admin Analytics Routes
+ * Enhanced Admin Analytics Routes
  * 
- * Provides statistics and analytics for admin dashboard
- * Uses public.users explicitly to avoid schema conflicts
+ * Provides comprehensive statistics and analytics for admin dashboard
+ * Includes time filtering and advanced metrics
  */
 
 const express = require('express');
@@ -10,9 +10,28 @@ const router = express.Router();
 const { pool } = require('../config/database');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
 
-// Get overall statistics
+/**
+ * Helper function to get time filter condition
+ */
+function getTimeFilterCondition(timeFilter, columnName = 'created_at') {
+  switch(timeFilter) {
+    case '1':
+      return `${columnName} >= CURRENT_DATE`;
+    case '7':
+      return `${columnName} >= NOW() - INTERVAL '7 days'`;
+    case '30':
+      return `${columnName} >= NOW() - INTERVAL '30 days'`;
+    case 'all':
+    default:
+      return '1=1'; // Always true - no filter
+  }
+}
+
+// Get overall statistics with time filter
 router.get('/stats', isAdmin, async (req, res) => {
   try {
+    const { timeFilter = 'all' } = req.query;
+
     // Total counts
     const [users, books, reviews] = await Promise.all([
       pool.query('SELECT COUNT(*) as count FROM public.users'),
@@ -21,16 +40,18 @@ router.get('/stats', isAdmin, async (req, res) => {
     ]);
 
     // Recent registrations (last 30 days)
-    let recentUsers = { rows: [{ count: 0 }] };
-    try {
-      recentUsers = await pool.query(`
-        SELECT COUNT(*) as count 
-        FROM public.users 
-        WHERE created_at >= NOW() - INTERVAL '30 days'
-      `);
-    } catch (err) {
-      console.log('Note: Could not fetch recent users count');
-    }
+    const recentUsers = await pool.query(`
+      SELECT COUNT(*) as count 
+      FROM public.users 
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+    `);
+
+    // Recent books (last 30 days)
+    const recentBooks = await pool.query(`
+      SELECT COUNT(*) as count 
+      FROM books 
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+    `);
 
     // Average rating
     const avgRating = await pool.query(`
@@ -38,14 +59,21 @@ router.get('/stats', isAdmin, async (req, res) => {
       FROM reviews
     `);
 
+    // Active users (users who reviewed in last 7 days)
+    const activeUsers = await pool.query(`
+      SELECT COUNT(DISTINCT userid) as count 
+      FROM reviews
+      WHERE created_at >= NOW() - INTERVAL '7 days'
+    `);
+
     res.json({
       totalUsers: parseInt(users.rows[0].count),
       totalBooks: parseInt(books.rows[0].count),
       totalReviews: parseInt(reviews.rows[0].count),
-      totalDownloads: 0, // Placeholder - to be implemented
       recentUsers: parseInt(recentUsers.rows[0].count),
-      recentBooks: 0, // Books table doesn't have timestamp
-      averageRating: parseFloat(avgRating.rows[0].avg) || 0
+      recentBooks: parseInt(recentBooks.rows[0].count),
+      averageRating: parseFloat(avgRating.rows[0].avg) || 0,
+      activeUsers: parseInt(activeUsers.rows[0].count)
     });
   } catch (error) {
     console.error('Error fetching stats:', error);
@@ -69,6 +97,7 @@ router.get('/popular-books', isAdmin, async (req, res) => {
       FROM books b
       LEFT JOIN reviews r ON b.id = r.bookid
       GROUP BY b.id, b.title, b.author, b.cover, b.likes, b.dislikes
+      HAVING COUNT(r.id) > 0
       ORDER BY review_count DESC, avg_rating DESC
       LIMIT 10
     `);
@@ -100,7 +129,7 @@ router.get('/genre-stats', isAdmin, async (req, res) => {
       WHERE genres IS NOT NULL AND genres != ''
       GROUP BY genre
       ORDER BY count DESC
-      LIMIT 10
+      LIMIT 12
     `);
 
     res.json(genreStats.rows.map(row => ({
@@ -113,15 +142,33 @@ router.get('/genre-stats', isAdmin, async (req, res) => {
   }
 });
 
-// Get user activity (registrations over time)
+// Get user activity (registrations over time) with time filter
 router.get('/user-activity', isAdmin, async (req, res) => {
   try {
+    const { timeFilter = '30' } = req.query;
+    let interval = '30 days';
+    
+    switch(timeFilter) {
+      case '1':
+        interval = '1 day';
+        break;
+      case '7':
+        interval = '7 days';
+        break;
+      case '30':
+        interval = '30 days';
+        break;
+      case 'all':
+        interval = '1 year';
+        break;
+    }
+
     const activity = await pool.query(`
       SELECT 
         DATE(created_at) as date,
         COUNT(*) as count
       FROM public.users
-      WHERE created_at >= NOW() - INTERVAL '30 days'
+      WHERE created_at >= NOW() - INTERVAL '${interval}'
       GROUP BY DATE(created_at)
       ORDER BY date ASC
     `);
@@ -136,53 +183,178 @@ router.get('/user-activity', isAdmin, async (req, res) => {
   }
 });
 
-// Get recent activity feed
+// Get book uploads over time (REAL DATA using created_at)
+router.get('/book-uploads', isAdmin, async (req, res) => {
+  try {
+    const { timeFilter = '30' } = req.query;
+    let interval = '30 days';
+    
+    switch(timeFilter) {
+      case '1':
+        interval = '1 day';
+        break;
+      case '7':
+        interval = '7 days';
+        break;
+      case '30':
+        interval = '30 days';
+        break;
+      case 'all':
+        interval = '1 year';
+        break;
+    }
+
+    const bookUploads = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as count
+      FROM books
+      WHERE created_at >= NOW() - INTERVAL '${interval}'
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `);
+
+    res.json(bookUploads.rows.map(row => ({
+      date: row.date,
+      count: parseInt(row.count)
+    })));
+  } catch (error) {
+    console.error('Error fetching book uploads:', error);
+    res.json([]);
+  }
+});
+
+// Get rating distribution (1-5 stars)
+router.get('/rating-distribution', isAdmin, async (req, res) => {
+  try {
+    const distribution = await pool.query(`
+      SELECT 
+        rating,
+        COUNT(*) as count
+      FROM reviews
+      GROUP BY rating
+      ORDER BY rating ASC
+    `);
+
+    res.json(distribution.rows.map(row => ({
+      rating: parseInt(row.rating),
+      count: parseInt(row.count)
+    })));
+  } catch (error) {
+    console.error('Error fetching rating distribution:', error);
+    res.json([]);
+  }
+});
+
+// Get review trends over time (REAL DATA using created_at)
+router.get('/review-trends', isAdmin, async (req, res) => {
+  try {
+    const { timeFilter = '30' } = req.query;
+    let interval = '30 days';
+    
+    switch(timeFilter) {
+      case '1':
+        interval = '1 day';
+        break;
+      case '7':
+        interval = '7 days';
+        break;
+      case '30':
+        interval = '30 days';
+        break;
+      case 'all':
+        interval = '1 year';
+        break;
+    }
+
+    const reviewTrends = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as count
+      FROM reviews
+      WHERE created_at >= NOW() - INTERVAL '${interval}'
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC
+    `);
+
+    res.json(reviewTrends.rows.map(row => ({
+      date: row.date,
+      count: parseInt(row.count)
+    })));
+  } catch (error) {
+    console.error('Error fetching review trends:', error);
+    res.json([]);
+  }
+});
+
+// Get recent activity feed (REAL DATA using created_at)
 router.get('/recent-activity', isAdmin, async (req, res) => {
   try {
-    // Get recent reviews (using id as proxy for time since no timestamp)
+    // Get recent reviews
     const recentReviews = await pool.query(`
       SELECT 
         r.id,
         r.rating,
         r.text as comment,
         r.username,
+        r.created_at,
         b.title as book_title,
         'review' as type
       FROM reviews r
       JOIN books b ON r.bookid = b.id
-      ORDER BY r.id DESC
-      LIMIT 5
+      ORDER BY r.created_at DESC
+      LIMIT 8
     `);
 
     // Get recent users
-    let recentUsers = { rows: [] };
-    try {
-      recentUsers = await pool.query(`
-        SELECT 
-          id,
-          username,
-          email,
-          created_at,
-          'user' as type
-        FROM public.users
-        ORDER BY created_at DESC
-        LIMIT 5
-      `);
-    } catch (err) {
-      console.log('Note: Could not fetch recent users');
-    }
+    const recentUsers = await pool.query(`
+      SELECT 
+        id,
+        username,
+        email,
+        created_at,
+        'user' as type
+      FROM public.users
+      ORDER BY created_at DESC
+      LIMIT 8
+    `);
+
+    // Get recent books
+    const recentBooks = await pool.query(`
+      SELECT 
+        id,
+        title,
+        author,
+        created_at,
+        'book' as type
+      FROM books
+      ORDER BY created_at DESC
+      LIMIT 8
+    `);
 
     // Combine activities
     const allActivity = [
       ...recentReviews.rows.map(r => ({
-        ...r,
-        createdAt: new Date() // Reviews don't have timestamps yet
+        type: 'review',
+        username: r.username,
+        book_title: r.book_title,
+        rating: r.rating,
+        createdAt: r.created_at
       })),
       ...recentUsers.rows.map(u => ({
-        ...u,
-        createdAt: u.created_at || new Date()
+        type: 'user',
+        username: u.username,
+        createdAt: u.created_at
+      })),
+      ...recentBooks.rows.map(b => ({
+        type: 'book',
+        title: b.title,
+        author: b.author,
+        createdAt: b.created_at
       }))
-    ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 10);
+    ]
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 15);
 
     res.json(allActivity);
   } catch (error) {
@@ -200,11 +372,12 @@ router.get('/top-reviewers', isAdmin, async (req, res) => {
         u.username,
         u.email,
         COUNT(r.id) as review_count,
-        COALESCE(AVG(r.rating)::numeric(10,2), 0) as avg_rating
+        COALESCE(ROUND(AVG(r.rating)::numeric, 1), 0) as avg_rating
       FROM public.users u
       JOIN reviews r ON u.id = r.userid
       GROUP BY u.id, u.username, u.email
-      ORDER BY review_count DESC
+      HAVING COUNT(r.id) > 0
+      ORDER BY review_count DESC, avg_rating DESC
       LIMIT 10
     `);
 
@@ -229,12 +402,13 @@ router.get('/books-without-reviews', isAdmin, async (req, res) => {
         b.id,
         b.title,
         b.author,
-        b.cover
+        b.cover,
+        b.created_at
       FROM books b
       LEFT JOIN reviews r ON b.id = r.bookid
       WHERE r.id IS NULL
-      ORDER BY b.id DESC
-      LIMIT 10
+      ORDER BY b.created_at DESC
+      LIMIT 20
     `);
 
     res.json(booksWithoutReviews.rows.map(book => ({
@@ -242,7 +416,7 @@ router.get('/books-without-reviews', isAdmin, async (req, res) => {
       title: book.title,
       author: book.author,
       cover: book.cover,
-      createdAt: null // No timestamp available
+      createdAt: book.created_at
     })));
   } catch (error) {
     console.error('Error fetching books without reviews:', error);
