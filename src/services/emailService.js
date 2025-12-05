@@ -1,49 +1,23 @@
 /**
- * Email Service using Gmail SMTP (100% FREE)
+ * Email Service using Brevo (formerly Sendinblue) - FREE 300 emails/day
  * 
  * Setup:
- * 1. Go to https://myaccount.google.com/security
- * 2. Enable 2-Step Verification
- * 3. Generate App Password for Mail
- * 4. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env
- * 
- * Note: Nodemailer is already installed in your project
+ * 1. Sign up at https://www.brevo.com/
+ * 2. Go to SMTP & API → API Keys
+ * 3. Create new API key
+ * 4. npm install @getbrevo/brevo
+ * 5. Set BREVO_API_KEY and EMAIL_FROM in .env
  */
 
-const nodemailer = require('nodemailer');
+const brevo = require('@getbrevo/brevo');
 const { BACKEND_URL, FRONTEND_URL } = require('../config/environment');
 
-// Import logger
-let logger;
-try {
-  logger = require('../config/logger');
-} catch (error) {
-  // Fallback to console if logger not available
-  logger = {
-    info: console.log,
-    error: console.error,
-    warn: console.warn
-  };
-}
-
-// Create transporter using Gmail
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD
-  }
-});
-
-// Verify connection on startup
-transporter.verify((error, success) => {
-  if (error) {
-    logger.error('Gmail SMTP connection error', { error: error.message });
-    logger.warn('Make sure you have set GMAIL_USER and GMAIL_APP_PASSWORD in .env');
-  } else {
-    logger.info('Gmail SMTP server is ready to send emails');
-  }
-});
+// Initialize Brevo API client
+const apiInstance = new brevo.TransactionalEmailsApi();
+apiInstance.setApiKey(
+  brevo.TransactionalEmailsApiApiKeys.apiKey,
+  process.env.BREVO_API_KEY
+);
 
 // Email template for verification
 function createVerificationEmailTemplate(verificationUrl, username = 'User') {
@@ -219,29 +193,25 @@ function createPasswordResetEmailTemplate(resetUrl, username = 'User') {
 async function sendVerificationEmail(email, token, username = 'User') {
   const verificationUrl = `${BACKEND_URL}/verify-email?token=${token}`;
   
-  logger.info('Sending verification email', { email, username });
-  logger.debug('Verification URL generated', { url: verificationUrl });
+  console.log(`📧 Sending verification email to ${email} via Brevo`);
+  console.log(`🔗 Verification URL: ${verificationUrl}`);
   
-  const mailOptions = {
-    from: `"Des2 Library" <${process.env.GMAIL_USER}>`,
-    to: email,
-    subject: 'Verify Your Email - Des2 Library',
-    html: createVerificationEmailTemplate(verificationUrl, username),
-    text: `Welcome to Des2 Library!\n\nHello ${username},\n\nPlease verify your email: ${verificationUrl}\n\nThis link expires in 24 hours.`
+  const sendSmtpEmail = new brevo.SendSmtpEmail();
+  sendSmtpEmail.sender = { 
+    name: 'Des2 Library', 
+    email: process.env.EMAIL_FROM 
   };
+  sendSmtpEmail.to = [{ email }];
+  sendSmtpEmail.subject = 'Verify Your Email - Des2 Library';
+  sendSmtpEmail.htmlContent = createVerificationEmailTemplate(verificationUrl, username);
+  sendSmtpEmail.textContent = `Welcome to Des2 Library!\n\nHello ${username},\n\nPlease verify your email: ${verificationUrl}\n\nThis link expires in 24 hours.`;
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    logger.info('Verification email sent successfully', { 
-      email, 
-      messageId: info.messageId 
-    });
+    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('✅ Verification email sent successfully via Brevo:', data.messageId);
     return true;
   } catch (error) {
-    logger.error('Failed to send verification email', { 
-      email, 
-      error: error.message 
-    });
+    console.error('❌ Brevo error:', error);
     return false;
   }
 }
@@ -250,29 +220,25 @@ async function sendVerificationEmail(email, token, username = 'User') {
 async function sendPasswordResetEmail(email, token, username = 'User') {
   const resetUrl = `${FRONTEND_URL}/reset-password.html?token=${token}`;
   
-  logger.info('Sending password reset email', { email, username });
-  logger.debug('Reset URL generated', { url: resetUrl });
+  console.log(`📧 Sending password reset email to ${email} via Brevo`);
+  console.log(`🔗 Reset URL: ${resetUrl}`);
   
-  const mailOptions = {
-    from: `"Des2 Library" <${process.env.GMAIL_USER}>`,
-    to: email,
-    subject: 'Reset Your Password - Des2 Library',
-    html: createPasswordResetEmailTemplate(resetUrl, username),
-    text: `Password Reset Request\n\nHello ${username},\n\nReset your password: ${resetUrl}\n\nThis link expires in 1 hour.`
+  const sendSmtpEmail = new brevo.SendSmtpEmail();
+  sendSmtpEmail.sender = { 
+    name: 'Des2 Library', 
+    email: process.env.EMAIL_FROM 
   };
+  sendSmtpEmail.to = [{ email }];
+  sendSmtpEmail.subject = 'Reset Your Password - Des2 Library';
+  sendSmtpEmail.htmlContent = createPasswordResetEmailTemplate(resetUrl, username);
+  sendSmtpEmail.textContent = `Password Reset Request\n\nHello ${username},\n\nReset your password: ${resetUrl}\n\nThis link expires in 1 hour.`;
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    logger.info('Password reset email sent successfully', { 
-      email, 
-      messageId: info.messageId 
-    });
+    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log('✅ Password reset email sent successfully via Brevo:', data.messageId);
     return true;
   } catch (error) {
-    logger.error('Failed to send password reset email', { 
-      email, 
-      error: error.message 
-    });
+    console.error('❌ Brevo error:', error);
     return false;
   }
 }
