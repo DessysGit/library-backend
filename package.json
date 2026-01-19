@@ -36,7 +36,6 @@
     "buffer-crc32": "^1.0.0",
     "cloudinary": "^2.8.0",
     "connect-pg-simple": "^10.0.0",
-    "connect-sqlite3": "^0.9.16",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
@@ -54,7 +53,6 @@
     "pg": "^8.16.3",
     "python-shell": "^5.0.0",
     "resend": "^6.5.2",
-    "sqlite3": "^5.0.2",
     "streamifier": "^0.1.1",
     "uid2": "^1.0.0",
     "winston": "^3.18.3"
