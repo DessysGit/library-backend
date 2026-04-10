@@ -2,12 +2,13 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const passport = require('../config/passport');
 const { pool } = require('../config/database');
 const { loginLimiter } = require('../middleware/rateLimiter');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/emailService');
-const { FRONTEND_URL } = require('../config/environment');
+const { FRONTEND_URL, JWT_SECRET } = require('../config/environment');
 
 // Register route
 router.post('/register', [
@@ -100,12 +101,22 @@ router.post('/login', loginLimiter, (req, res, next) => {
 
     req.logIn(user, (err) => {
       if (err) { return next(err); }
+
+      // Issue a JWT so the cross-origin frontend (Netlify) can auth
+      // without relying on cross-site cookies.
+      const token = jwt.sign(
+        { id: user.id, username: user.username, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
       res.json({
         id: user.id,
         username: user.username,
         email: user.email,
         role: user.role,
-        profilePicture: user.profilePicture
+        profilePicture: user.profilePicture,
+        token  // <-- frontend stores this in localStorage
       });
     });
   })(req, res, next);
@@ -378,30 +389,40 @@ router.post('/reset-password', [
 
 // Current user
 router.get('/current-user', async (req, res) => {
+  // Support both session-based auth (same-origin) and JWT auth (cross-origin Netlify→Render)
+  let userId = null;
+
   if (req.isAuthenticated()) {
-    try {
-      const result = await pool.query(
-        'SELECT id, username, role, profilepicture as "profilePicture" FROM users WHERE id = $1',
-        [req.user.id]
-      );
-      const freshUser = result.rows[0];
-      // Ensure profilePicture is always returned (even if null)
-      if (!freshUser.profilePicture) {
-        freshUser.profilePicture = '';
-      }
-      res.json(freshUser);
-    } catch (err) {
-      console.error('Error fetching current user:', err);
-      // Return basic user info with empty profilePicture on error
-      res.json({
-        id: req.user.id,
-        username: req.user.username,
-        role: req.user.role,
-        profilePicture: req.user.profilePicture || ''
-      });
-    }
+    // Session cookie worked (same-origin / local dev)
+    userId = req.user.id;
   } else {
-    res.status(401).send('Not authenticated');
+    // Try JWT from Authorization header: "Bearer <token>"
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.id;
+      } catch (e) {
+        return res.status(401).send('Not authenticated');
+      }
+    } else {
+      return res.status(401).send('Not authenticated');
+    }
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT id, username, role, email, profilepicture as "profilePicture" FROM users WHERE id = $1',
+      [userId]
+    );
+    const freshUser = result.rows[0];
+    if (!freshUser) return res.status(401).send('Not authenticated');
+    if (!freshUser.profilePicture) freshUser.profilePicture = '';
+    res.json(freshUser);
+  } catch (err) {
+    console.error('Error fetching current user:', err);
+    res.status(500).send('Server error');
   }
 });
 
