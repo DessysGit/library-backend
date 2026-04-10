@@ -120,9 +120,11 @@ app.use(session({
     secure: isProduction,        // HTTPS only in production
     httpOnly: true,              // Prevent client-side JS from reading cookie
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    sameSite: isProduction ? 'none' : 'lax' // CSRF protection
+    sameSite: isProduction ? 'none' : 'lax', // IMPORTANT: 'none' allows cross-origin cookies in production
+    domain: isProduction ? undefined : undefined // Don't set domain, let browser handle it
   },
-  name: 'sessionId'              // Cookie name
+  name: 'sessionId',             // Cookie name
+  proxy: isProduction            // Trust proxy in production (important for Render)
 }));
 
 // ============================================
