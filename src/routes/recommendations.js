@@ -14,6 +14,22 @@ router.get('/', isAuthenticated, async (req, res) => {
     return res.status(400).json({ error: "User ID is required" });
   }
 
+  // Get user's liked books for "why recommended" logic
+  const { pool } = require('../config/database');
+  let userLikes = [];
+  try {
+    const userLikesResult = await pool.query(
+      `SELECT b.id, b.title, b.author, b.genres 
+       FROM books b
+       INNER JOIN book_likes bl ON b.id = bl.book_id
+       WHERE bl.user_id = $1 AND bl.liked = true`,
+      [userId]
+    );
+    userLikes = userLikesResult.rows;
+  } catch (err) {
+    console.error('Error fetching user likes:', err);
+  }
+
   // Try external Flask service first
   try {
     const response = await axios.get(`http://127.0.0.1:5000/recommendations?user_id=${encodeURIComponent(userId)}`);
@@ -21,7 +37,10 @@ router.get('/', isAuthenticated, async (req, res) => {
       const filteredRecommendations = response.data.recommendations
         .filter((book) => book.id !== parseInt(currentBookId))
         .slice(0, 4);
-      return res.json({ recommendations: filteredRecommendations });
+      return res.json({ 
+        recommendations: filteredRecommendations,
+        userLikes: userLikes
+      });
     }
   } catch (error) {
     console.error("Flask service not available:", error.message);
@@ -48,18 +67,23 @@ router.get('/', isAuthenticated, async (req, res) => {
         const filteredRecommendations = result.recommendations
           .filter((book) => book.id !== parseInt(currentBookId))
           .slice(0, 4);
-        res.json({ recommendations: filteredRecommendations });
+        res.json({ 
+          recommendations: filteredRecommendations,
+          userLikes: userLikes
+        });
       } catch (err) {
         console.error('Error parsing recommend.py output:', err);
 
         // Fallback: query database directly
         try {
-          const { pool } = require('../config/database');
           const fallback = await pool.query(
             'SELECT id, title, description, cover FROM books WHERE id != $1 LIMIT 4',
             [currentBookId]
           );
-          res.json({ recommendations: fallback.rows });
+          res.json({ 
+            recommendations: fallback.rows,
+            userLikes: userLikes
+          });
         } catch (dbErr) {
           console.error("Error fetching fallback recommendations:", dbErr.message);
           res.status(500).json({ error: "Error fetching recommendations" });
