@@ -36,7 +36,7 @@ router.get('/', isAuthenticated, async (req, res) => {
     if (response.data && response.data.recommendations) {
       const filteredRecommendations = response.data.recommendations
         .filter((book) => book.id !== parseInt(currentBookId))
-        .slice(0, 4);
+        .slice(0, 12);
       return res.json({ 
         recommendations: filteredRecommendations,
         userLikes: userLikes
@@ -66,7 +66,7 @@ router.get('/', isAuthenticated, async (req, res) => {
         const result = JSON.parse(output);
         const filteredRecommendations = result.recommendations
           .filter((book) => book.id !== parseInt(currentBookId))
-          .slice(0, 4);
+          .slice(0, 12);
         res.json({ 
           recommendations: filteredRecommendations,
           userLikes: userLikes
@@ -77,7 +77,7 @@ router.get('/', isAuthenticated, async (req, res) => {
         // Fallback: query database directly
         try {
           const fallback = await pool.query(
-            'SELECT id, title, description, cover FROM books WHERE id != $1 LIMIT 4',
+            'SELECT id, title, description, cover FROM books WHERE id != $1 LIMIT 12',
             [currentBookId]
           );
           res.json({ 
