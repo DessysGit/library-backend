@@ -5,6 +5,45 @@ const { spawn } = require('child_process');
 const path = require('path');
 const { isAuthenticated } = require('../middleware/auth');
 
+// ===== CACHING SYSTEM =====
+// Simple in-memory cache to speed up recommendations
+const recommendationCache = new Map();
+const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+
+function getCacheKey(userId, bookId) {
+  return `${userId}_${bookId || 'general'}`;
+}
+
+function getCachedRecommendations(userId, bookId) {
+  const key = getCacheKey(userId, bookId);
+  const cached = recommendationCache.get(key);
+  
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    console.log(`✅ Cache HIT for ${key}`);
+    return cached.data;
+  }
+  
+  console.log(`❌ Cache MISS for ${key}`);
+  return null;
+}
+
+function setCachedRecommendations(userId, bookId, data) {
+  const key = getCacheKey(userId, bookId);
+  recommendationCache.set(key, {
+    data: data,
+    timestamp: Date.now()
+  });
+  
+  // Limit cache size to 100 entries (prevent memory bloat)
+  if (recommendationCache.size > 100) {
+    const firstKey = recommendationCache.keys().next().value;
+    recommendationCache.delete(firstKey);
+  }
+  
+  console.log(`💾 Cached recommendations for ${key}`);
+}
+// ===== END CACHING SYSTEM =====
+
 // Get book recommendations for user
 router.get('/', isAuthenticated, async (req, res) => {
   const userId = req.user.id;
@@ -13,6 +52,13 @@ router.get('/', isAuthenticated, async (req, res) => {
   if (!userId) {
     return res.status(400).json({ error: "User ID is required" });
   }
+
+  // ===== CHECK CACHE FIRST =====
+  const cachedResult = getCachedRecommendations(userId, currentBookId);
+  if (cachedResult) {
+    return res.json(cachedResult); // Return cached data immediately
+  }
+  // ===== END CACHE CHECK =====
 
   // Get user's liked books for "why recommended" logic
   const { pool } = require('../config/database');
@@ -37,10 +83,16 @@ router.get('/', isAuthenticated, async (req, res) => {
       const filteredRecommendations = response.data.recommendations
         .filter((book) => book.id !== parseInt(currentBookId))
         .slice(0, 12);
-      return res.json({ 
+      
+      const result = {
         recommendations: filteredRecommendations,
         userLikes: userLikes
-      });
+      };
+      
+      // Cache the result
+      setCachedRecommendations(userId, currentBookId, result);
+      
+      return res.json(result);
     }
   } catch (error) {
     console.error("Flask service not available:", error.message);
@@ -67,10 +119,16 @@ router.get('/', isAuthenticated, async (req, res) => {
         const filteredRecommendations = result.recommendations
           .filter((book) => book.id !== parseInt(currentBookId))
           .slice(0, 12);
-        res.json({ 
+        
+        const responseData = {
           recommendations: filteredRecommendations,
           userLikes: userLikes
-        });
+        };
+        
+        // Cache the result
+        setCachedRecommendations(userId, currentBookId, responseData);
+        
+        res.json(responseData);
       } catch (err) {
         console.error('Error parsing recommend.py output:', err);
 
@@ -80,10 +138,16 @@ router.get('/', isAuthenticated, async (req, res) => {
             'SELECT id, title, description, cover FROM books WHERE id != $1 LIMIT 12',
             [currentBookId]
           );
-          res.json({ 
+          
+          const fallbackData = {
             recommendations: fallback.rows,
             userLikes: userLikes
-          });
+          };
+          
+          // Cache even fallback results
+          setCachedRecommendations(userId, currentBookId, fallbackData);
+          
+          res.json(fallbackData);
         } catch (dbErr) {
           console.error("Error fetching fallback recommendations:", dbErr.message);
           res.status(500).json({ error: "Error fetching recommendations" });
