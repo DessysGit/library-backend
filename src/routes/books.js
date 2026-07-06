@@ -118,6 +118,16 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
 
     const { title, author, description } = req.body;
     let genres = req.body.genres;
+
+    // ── Server-side validation ──────────────────────────────────────────────
+    const missing = [];
+    if (!title || !title.trim())       missing.push('Title');
+    if (!author || !author.trim())     missing.push('Author');
+    if (!req.files || !req.files['bookFile']) missing.push('Book file (PDF)');
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `The following fields are required: ${missing.join(', ')}` });
+    }
+    // ───────────────────────────────────────────────────────────────────────
     
     if (genres) {
       try {
@@ -174,11 +184,11 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
       }
     }
 
-    await pool.query(
-      'INSERT INTO books (title, author, description, genres, cover, file) VALUES ($1, $2, $3, $4, $5, $6)',
+    const inserted = await pool.query(
+      'INSERT INTO books (title, author, description, genres, cover, file) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, title, author',
       [title, author, description, genres, coverUrl, pdfUrl]
     );
-    res.status(200).send('Book added successfully');
+    res.status(200).json({ message: 'Book added successfully', book: inserted.rows[0] });
   } catch (error) {
     console.error("Error uploading book:", error);
     res.status(500).send("Failed to upload book: " + error.message);
