@@ -54,8 +54,17 @@ const isSeedAdmin = async (req, res, next) => {
   res.status(403).send('Only the seeded admin can perform this action.');
 };
 
+// Optional auth — resolves user from session or JWT but never blocks the request.
+// Use on public routes that need to know who the caller is (e.g. to set isAdmin flag)
+// without requiring authentication.
+const optionalAuth = async (req, res, next) => {
+  await resolveUser(req);
+  next();
+};
+
 module.exports = {
   isAuthenticated,
   isAdmin,
-  isSeedAdmin
+  isSeedAdmin,
+  optionalAuth
 };
