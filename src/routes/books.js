@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const { pool } = require('../config/database');
-const { isAuthenticated, isAdmin } = require('../middleware/auth');
+const { isAuthenticated, isAdmin, optionalAuth } = require('../middleware/auth');
 const cloudinary = require('../config/cloudinary');
 const { isCloudProduction } = require('../config/environment');
 const fs = require('fs');
@@ -26,14 +26,15 @@ const upload = multer({
 });
 
 // Get all books with filters and pagination
-router.get('/', async (req, res) => {
+router.get('/', optionalAuth, async (req, res) => {
   const title = req.query.title || "";
   const author = req.query.author || "";
   const genre = req.query.genre || "";
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
-  const isAdminUser = req.isAuthenticated() && req.user.role === 'admin';
+  // Works for both session users and JWT users now that optionalAuth resolves req.user
+  const isAdminUser = req.user && req.user.role === 'admin';
 
   try {
     let query = 'SELECT * FROM books WHERE title ILIKE $1 AND author ILIKE $2';

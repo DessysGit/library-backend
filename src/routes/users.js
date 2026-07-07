@@ -21,6 +21,106 @@ router.get('/', isAdmin, async (req, res) => {
   }
 });
 
+// Get current user's real activity (reviews + likes)
+router.get('/activity', isAuthenticated, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    // Recent reviews the user wrote
+    const reviews = await pool.query(`
+      SELECT
+        'review'         AS type,
+        r.rating,
+        b.title          AS book_title,
+        b.id             AS book_id,
+        r.created_at
+      FROM reviews r
+      JOIN books b ON r.bookid = b.id
+      WHERE r.userid = $1
+      ORDER BY r.created_at DESC
+      LIMIT 10
+    `, [userId]);
+
+    // Recent likes/dislikes (only if likes table has created_at)
+    let likeRows = [];
+    try {
+      const likes = await pool.query(`
+        SELECT
+          l.action         AS type,
+          b.title          AS book_title,
+          b.id             AS book_id,
+          l.created_at
+        FROM likes l
+        JOIN books b ON l.bookid = b.id
+        WHERE l.userid = $1
+          AND l.created_at IS NOT NULL
+        ORDER BY l.created_at DESC
+        LIMIT 10
+      `, [userId]);
+      likeRows = likes.rows;
+    } catch (_) {
+      // likes table has no created_at column — skip silently
+    }
+
+    const allActivity = [
+      ...reviews.rows.map(r => ({
+        type:      'review',
+        rating:    r.rating,
+        bookTitle: r.book_title,
+        bookId:    r.book_id,
+        createdAt: r.created_at
+      })),
+      ...likeRows.map(l => ({
+        type:      l.type,   // 'like' or 'dislike'
+        bookTitle: l.book_title,
+        bookId:    l.book_id,
+        createdAt: l.created_at
+      }))
+    ]
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 10);
+
+    res.json(allActivity);
+  } catch (err) {
+    console.error('Error fetching user activity:', err);
+    res.status(500).json({ error: 'Failed to fetch activity' });
+  }
+});
+
+// Get current user's own reviews (with book details)
+router.get('/my-reviews', isAuthenticated, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const result = await pool.query(`
+      SELECT
+        r.id,
+        r.text,
+        r.rating,
+        r.created_at,
+        b.title  AS book_title,
+        b.id     AS book_id,
+        b.author
+      FROM reviews r
+      JOIN books b ON r.bookid = b.id
+      WHERE r.userid = $1
+      ORDER BY r.created_at DESC
+      LIMIT 20
+    `, [userId]);
+
+    res.json(result.rows.map(r => ({
+      id:        r.id,
+      text:      r.text,
+      rating:    r.rating,
+      bookTitle: r.book_title,
+      bookId:    r.book_id,
+      author:    r.author,
+      createdAt: r.created_at
+    })));
+  } catch (err) {
+    console.error('Error fetching user reviews:', err);
+    res.status(500).json({ error: 'Failed to fetch reviews' });
+  }
+});
+
 // Get user profile
 router.get('/profile', isAuthenticated, async (req, res) => {
   const { id } = req.user;
