@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const os = require('os');
 const { pool } = require('../config/database');
 const { isAuthenticated, isAdmin, optionalAuth } = require('../middleware/auth');
 const cloudinary = require('../config/cloudinary');
@@ -144,7 +145,7 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
     }
 
     if (isCloudProduction) {
-      // Upload to Cloudinary
+      // Upload cover image (small — single stream is fine)
       if (req.files['cover']) {
         const coverBuffer = req.files['cover'][0].buffer;
         coverUrl = await new Promise((resolve, reject) => {
@@ -156,18 +157,29 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
         });
       }
 
+      // Upload PDF using upload_large with 6 MB chunks.
+      // This bypasses Cloudinary's 10 MB per-request limit on free plans
+      // so files up to the plan's total storage cap will upload correctly.
       if (req.files['bookFile']) {
-        const pdfBuffer = req.files['bookFile'][0].buffer;
-        pdfUrl = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
-            { folder: 'book-pdfs', resource_type: 'raw', use_filename: true, unique_filename: false },
-            (error, result) => error ? reject(error) : resolve(result.secure_url)
-          );
-          stream.end(pdfBuffer);
-        });
-      }
+        const pdfFile   = req.files['bookFile'][0];
+        const tempPath  = path.join(os.tmpdir(), `${Date.now()}-${pdfFile.originalname}`);
+        fs.writeFileSync(tempPath, pdfFile.buffer);
+        try {
+          const result = await cloudinary.uploader.upload_large(tempPath, {
+            folder:           'book-pdfs',
+            resource_type:    'raw',
+            chunk_size:       6_000_000,   // 6 MB chunks — safely under the 10 MB per-request cap
+            use_filename:     true,
+            unique_filename:  false
+          });
+          pdfUrl = result.secure_url;
+        } finally {
+          // Always remove the temp file, even on error
+          if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+        }
+      } 
     } else {
-      // Save locally
+      // Save locally in development
       const uploadDir = path.join(__dirname, '../../uploads');
       if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
@@ -191,8 +203,12 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
     );
     res.status(200).json({ message: 'Book added successfully', book: inserted.rows[0] });
   } catch (error) {
-    console.error("Error uploading book:", error);
-    res.status(500).send("Failed to upload book: " + error.message);
+    console.error('Error uploading book:', error);
+    // Always respond with JSON so the frontend can display the message cleanly
+    const message = error.http_code === 400 || (error.message && error.message.toLowerCase().includes('size'))
+      ? `File too large for the current Cloudinary plan. Try a smaller PDF (under 10 MB per chunk) or upgrade your Cloudinary account.`
+      : error.message || 'Unknown error';
+    res.status(500).json({ error: `Failed to upload book: ${message}` });
   }
 });
 
