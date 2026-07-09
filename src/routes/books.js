@@ -5,6 +5,7 @@ const os = require('os');
 const { pool } = require('../config/database');
 const { isAuthenticated, isAdmin, optionalAuth } = require('../middleware/auth');
 const cloudinary = require('../config/cloudinary');
+const { uploadToDrive, deleteFromDrive, isConfigured: driveConfigured } = require('../config/googleDrive');
 const { isCloudProduction } = require('../config/environment');
 const fs = require('fs');
 const path = require('path');
@@ -119,17 +120,34 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
     let pdfUrl = null;
 
     const { title, author, description } = req.body;
+    const driveLink = (req.body.driveLink || '').trim();
     let genres = req.body.genres;
 
     // ── Server-side validation ──────────────────────────────────────────────
     const missing = [];
-    if (!title || !title.trim())       missing.push('Title');
-    if (!author || !author.trim())     missing.push('Author');
-    if (!req.files || !req.files['bookFile']) missing.push('Book file (PDF)');
+    if (!title || !title.trim())  missing.push('Title');
+    if (!author || !author.trim()) missing.push('Author');
+
+    const hasFile      = req.files && req.files['bookFile'];
+    const hasDriveLink = driveLink && driveLink.includes('drive.google.com');
+
+    if (!hasFile && !hasDriveLink) {
+      missing.push('Book file — upload a PDF or paste a Google Drive link');
+    }
+    if (driveLink && !hasDriveLink) {
+      return res.status(400).json({ error: 'Invalid Google Drive link. Please share the file and paste the sharing URL.' });
+    }
     if (missing.length > 0) {
       return res.status(400).json({ error: `The following fields are required: ${missing.join(', ')}` });
     }
     // ───────────────────────────────────────────────────────────────────────
+
+    // If a Drive link is provided, use it directly — no Cloudinary upload needed.
+    // The download route already knows how to convert Drive sharing URLs to
+    // direct download URLs at request time.
+    if (hasDriveLink) {
+      pdfUrl = driveLink;
+    }
     
     if (genres) {
       try {
@@ -157,27 +175,33 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
         });
       }
 
-      // Upload PDF using upload_large with 6 MB chunks.
-      // This bypasses Cloudinary's 10 MB per-request limit on free plans
-      // so files up to the plan's total storage cap will upload correctly.
-      if (req.files['bookFile']) {
-        const pdfFile   = req.files['bookFile'][0];
-        const tempPath  = path.join(os.tmpdir(), `${Date.now()}-${pdfFile.originalname}`);
-        fs.writeFileSync(tempPath, pdfFile.buffer);
-        try {
-          const result = await cloudinary.uploader.upload_large(tempPath, {
-            folder:           'book-pdfs',
-            resource_type:    'raw',
-            chunk_size:       6_000_000,   // 6 MB chunks — safely under the 10 MB per-request cap
-            use_filename:     true,
-            unique_filename:  false
-          });
-          pdfUrl = result.secure_url;
-        } finally {
-          // Always remove the temp file, even on error
-          if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      // ── PDF upload ──────────────────────────────────────────────────────
+      // Priority: Google Drive (no size limits, no timeout risk) → Cloudinary fallback
+      if (!hasDriveLink && req.files['bookFile']) {
+        const pdfFile = req.files['bookFile'][0];
+
+        if (driveConfigured()) {
+          // Upload directly to the configured Google Drive account.
+          // Permissions are set automatically — no manual sharing needed.
+          pdfUrl = await uploadToDrive(pdfFile.buffer, pdfFile.originalname);
+        } else {
+          // Cloudinary fallback (chunked upload to stay under the 10 MB limit)
+          const tempPath = path.join(os.tmpdir(), `${Date.now()}-${pdfFile.originalname}`);
+          fs.writeFileSync(tempPath, pdfFile.buffer);
+          try {
+            const result = await cloudinary.uploader.upload_large(tempPath, {
+              folder:          'book-pdfs',
+              resource_type:   'raw',
+              chunk_size:      6_000_000,
+              use_filename:    true,
+              unique_filename: false
+            });
+            pdfUrl = result.secure_url;
+          } finally {
+            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+          }
         }
-      } 
+      }
     } else {
       // Save locally in development
       const uploadDir = path.join(__dirname, '../../uploads');
@@ -189,7 +213,7 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
         fs.writeFileSync(coverPath, coverFile.buffer);
         coverUrl = `/uploads/${path.basename(coverPath)}`;
       }
-      if (req.files['bookFile']) {
+      if (!hasDriveLink && req.files['bookFile']) {
         const bookFile = req.files['bookFile'][0];
         const bookPath = path.join(uploadDir, Date.now() + '-' + bookFile.originalname);
         fs.writeFileSync(bookPath, bookFile.buffer);
@@ -364,13 +388,11 @@ router.delete('/:id', isAdmin, async (req, res) => {
 
     const { cover, file } = row.rows[0];
 
-    // Delete from Cloudinary if applicable
-    if (cover) {
-      await deleteCoverFromCloudinary(cover);
-    }
-
-    if (file) {
+    // Delete from Cloudinary or Google Drive
+    if (cover) await deleteCoverFromCloudinary(cover);
+    if (file)  {
       await deletePdfFromCloudinary(file);
+      await deleteFromDrive(file);  // no-op if not a Drive URL
     }
     
     // Delete from local storage if applicable
