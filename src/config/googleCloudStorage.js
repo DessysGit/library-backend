@@ -47,12 +47,13 @@ async function uploadToStorage(buffer, originalFilename) {
     const destination = `books/${Date.now()}-${originalFilename}`;
     const file        = bucket.file(destination);
 
-    // resumable: true handles large files reliably (multipart upload under the hood)
-    // public: true makes the object publicly readable immediately after upload
+    // resumable: true handles large files reliably (multipart upload under the hood).
+    // No public: true here — with uniform bucket-level access enabled, public
+    // access is controlled by the bucket's IAM policy (allUsers = Storage Object
+    // Viewer), not per-object ACLs. Setting public: true would throw a 403.
     await file.save(buffer, {
         metadata:  { contentType: 'application/pdf' },
         resumable: true,
-        public:    true,
     });
 
     // Permanent public URL — no redirect or conversion needed at download time
