@@ -86,6 +86,7 @@ module.exports = {
   PORT: process.env.PORT || 3000,
   SESSION_SECRET: process.env.SESSION_SECRET || 'dev-secret-key-change-this',
   JWT_SECRET: process.env.JWT_SECRET || process.env.SESSION_SECRET || 'dev-jwt-secret-change-this',
+  GOOGLE_STORAGE_BUCKET: process.env.GOOGLE_STORAGE_BUCKET || null,
   ADMIN_USERNAME: process.env.ADMIN_USERNAME || 'admin',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'change-this-password'
 };
