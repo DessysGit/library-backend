@@ -5,7 +5,6 @@ const os = require('os');
 const { pool } = require('../config/database');
 const { isAuthenticated, isAdmin, optionalAuth } = require('../middleware/auth');
 const cloudinary = require('../config/cloudinary');
-const { uploadToDrive, deleteFromDrive, isConfigured: driveConfigured } = require('../config/googleDrive');
 const { uploadToStorage, deleteFromStorage, isConfigured: gcsConfigured } = require('../config/googleCloudStorage');
 const { isCloudProduction } = require('../config/environment');
 const fs = require('fs');
@@ -121,33 +120,15 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
     let pdfUrl = null;
 
     const { title, author, description } = req.body;
-    const driveLink = (req.body.driveLink || '').trim();
     let genres = req.body.genres;
 
     // ── Server-side validation ──────────────────────────────────────────────
     const missing = [];
     if (!title || !title.trim())  missing.push('Title');
     if (!author || !author.trim()) missing.push('Author');
-
-    const hasFile      = req.files && req.files['bookFile'];
-    const hasDriveLink = driveLink && driveLink.includes('drive.google.com');
-
-    if (!hasFile && !hasDriveLink) {
-      missing.push('Book file — upload a PDF or paste a Google Drive link');
-    }
-    if (driveLink && !hasDriveLink) {
-      return res.status(400).json({ error: 'Invalid Google Drive link. Please share the file and paste the sharing URL.' });
-    }
+    if (!req.files || !req.files['bookFile']) missing.push('Book file (PDF)');
     if (missing.length > 0) {
       return res.status(400).json({ error: `The following fields are required: ${missing.join(', ')}` });
-    }
-    // ───────────────────────────────────────────────────────────────────────
-
-    // If a Drive link is provided, use it directly — no Cloudinary upload needed.
-    // The download route already knows how to convert Drive sharing URLs to
-    // direct download URLs at request time.
-    if (hasDriveLink) {
-      pdfUrl = driveLink;
     }
     
     if (genres) {
@@ -177,23 +158,15 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
       }
 
       // ── PDF upload ──────────────────────────────────────────────────────
-      // Priority order:
-      //   1. Google Cloud Storage  — no size limits, same service account key
-      //   2. Google Drive          — fallback if GCS not configured
-      //   3. Cloudinary            — fallback for both (10 MB limit on free plan)
-      if (!hasDriveLink && req.files['bookFile']) {
+      // GCS is the primary store (no file-size limits, same service account key).
+      // Falls back to Cloudinary when GCS is not configured (e.g. local dev).
+      if (req.files && req.files['bookFile']) {
         const pdfFile = req.files['bookFile'][0];
 
         if (gcsConfigured()) {
-          // GCS: no storage quota issues, no Shared Drive setup needed
           pdfUrl = await uploadToStorage(pdfFile.buffer, pdfFile.originalname);
-
-        } else if (driveConfigured()) {
-          // Drive fallback (requires Shared Drive on Workspace accounts)
-          pdfUrl = await uploadToDrive(pdfFile.buffer, pdfFile.originalname);
-
         } else {
-          // Cloudinary fallback — chunked to stay under the 10 MB per-request limit
+          // Cloudinary fallback — chunked to stay under the 10 MB per-request cap
           const tempPath = path.join(os.tmpdir(), `${Date.now()}-${pdfFile.originalname}`);
           fs.writeFileSync(tempPath, pdfFile.buffer);
           try {
@@ -396,11 +369,10 @@ router.delete('/:id', isAdmin, async (req, res) => {
 
     const { cover, file } = row.rows[0];
 
-    // Delete from Cloudinary, Google Drive, or GCS
+    // Clean up stored files from Cloudinary and GCS
     if (cover) await deleteCoverFromCloudinary(cover);
-    if (file)  {
+    if (file) {
       await deletePdfFromCloudinary(file);
-      await deleteFromDrive(file);    // no-op if not a Drive URL
       await deleteFromStorage(file);  // no-op if not a GCS URL
     }
     
