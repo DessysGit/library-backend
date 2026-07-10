@@ -6,6 +6,7 @@ const { pool } = require('../config/database');
 const { isAuthenticated, isAdmin, optionalAuth } = require('../middleware/auth');
 const cloudinary = require('../config/cloudinary');
 const { uploadToDrive, deleteFromDrive, isConfigured: driveConfigured } = require('../config/googleDrive');
+const { uploadToStorage, deleteFromStorage, isConfigured: gcsConfigured } = require('../config/googleCloudStorage');
 const { isCloudProduction } = require('../config/environment');
 const fs = require('fs');
 const path = require('path');
@@ -176,16 +177,23 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
       }
 
       // ── PDF upload ──────────────────────────────────────────────────────
-      // Priority: Google Drive (no size limits, no timeout risk) → Cloudinary fallback
+      // Priority order:
+      //   1. Google Cloud Storage  — no size limits, same service account key
+      //   2. Google Drive          — fallback if GCS not configured
+      //   3. Cloudinary            — fallback for both (10 MB limit on free plan)
       if (!hasDriveLink && req.files['bookFile']) {
         const pdfFile = req.files['bookFile'][0];
 
-        if (driveConfigured()) {
-          // Upload directly to the configured Google Drive account.
-          // Permissions are set automatically — no manual sharing needed.
+        if (gcsConfigured()) {
+          // GCS: no storage quota issues, no Shared Drive setup needed
+          pdfUrl = await uploadToStorage(pdfFile.buffer, pdfFile.originalname);
+
+        } else if (driveConfigured()) {
+          // Drive fallback (requires Shared Drive on Workspace accounts)
           pdfUrl = await uploadToDrive(pdfFile.buffer, pdfFile.originalname);
+
         } else {
-          // Cloudinary fallback (chunked upload to stay under the 10 MB limit)
+          // Cloudinary fallback — chunked to stay under the 10 MB per-request limit
           const tempPath = path.join(os.tmpdir(), `${Date.now()}-${pdfFile.originalname}`);
           fs.writeFileSync(tempPath, pdfFile.buffer);
           try {
@@ -388,11 +396,12 @@ router.delete('/:id', isAdmin, async (req, res) => {
 
     const { cover, file } = row.rows[0];
 
-    // Delete from Cloudinary or Google Drive
+    // Delete from Cloudinary, Google Drive, or GCS
     if (cover) await deleteCoverFromCloudinary(cover);
     if (file)  {
       await deletePdfFromCloudinary(file);
-      await deleteFromDrive(file);  // no-op if not a Drive URL
+      await deleteFromDrive(file);    // no-op if not a Drive URL
+      await deleteFromStorage(file);  // no-op if not a GCS URL
     }
     
     // Delete from local storage if applicable
