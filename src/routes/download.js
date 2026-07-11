@@ -4,33 +4,27 @@ const path = require('path');
 const fs = require('fs');
 const { pool } = require('../config/database');
 
-// Download book file
 router.get('/:bookId', async (req, res) => {
   const bookId = req.params.bookId;
   try {
     const result = await pool.query('SELECT title, file FROM books WHERE id = $1', [bookId]);
-    if (result.rows.length === 0) return res.status(404).send('Book not found');
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Book not found' });
 
     const { title, file: fileUrl } = result.rows[0];
-    if (!fileUrl) return res.status(404).send('No file attached to this book.');
+    if (!fileUrl) return res.status(404).json({ error: 'No file attached to this book.' });
 
-    const safeTitle = (title || 'book').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const safeFilename = (title || 'book').replace(/[^a-z0-9]/gi, '_').toLowerCase() + '.pdf';
 
     if (fileUrl.startsWith('http')) {
-      // Google Cloud Storage and Cloudinary are both direct public URLs.
-      // A plain redirect is all that is needed — the browser downloads straight
-      // from the CDN with no Render timeout risk regardless of file size.
-      return res.redirect(302, fileUrl);
-
+      return res.json({ url: fileUrl, filename: safeFilename });
     } else {
-      // Local file (development only)
       const filePath = path.join(__dirname, '../../', fileUrl);
-      if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
-      res.download(filePath, `${safeTitle}.pdf`);
+      if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+      res.download(filePath, safeFilename);
     }
   } catch (err) {
     console.error('Error downloading book:', err);
-    res.status(500).send('Failed to fetch book');
+    res.status(500).json({ error: 'Failed to fetch book' });
   }
 });
 
