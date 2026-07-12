@@ -85,7 +85,16 @@ module.exports = {
   isCloudProduction,
   PORT: process.env.PORT || 3000,
   SESSION_SECRET: process.env.SESSION_SECRET || 'dev-secret-key-change-this',
-  JWT_SECRET: process.env.JWT_SECRET || process.env.SESSION_SECRET || 'dev-jwt-secret-change-this',
+  JWT_SECRET: (() => {
+    const secret = process.env.JWT_SECRET || process.env.SESSION_SECRET || 'dev-jwt-secret-change-this';
+    if (secret === 'dev-jwt-secret-change-this' || secret === 'dev-secret-key-change-this') {
+      console.warn('⚠️  WARNING: Using a hardcoded JWT_SECRET fallback. Set JWT_SECRET in environment variables for production.');
+    }
+    if (secret === process.env.SESSION_SECRET) {
+      console.warn('⚠️  WARNING: JWT_SECRET is falling back to SESSION_SECRET. Set a separate JWT_SECRET in environment variables for better security.');
+    }
+    return secret;
+  })(),
   GOOGLE_STORAGE_BUCKET: process.env.GOOGLE_STORAGE_BUCKET || null,
   ADMIN_USERNAME: process.env.ADMIN_USERNAME || 'admin',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'change-this-password'
