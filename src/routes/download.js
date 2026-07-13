@@ -16,7 +16,17 @@ router.get('/:bookId', async (req, res) => {
     const safeFilename = (title || 'book').replace(/[^a-z0-9]/gi, '_').toLowerCase() + '.pdf';
 
     if (fileUrl.startsWith('http')) {
-      return res.json({ url: fileUrl, filename: safeFilename });
+      let downloadUrl = fileUrl;
+
+      // For Cloudinary URLs: inject fl_attachment:filename so Cloudinary sends
+      // Content-Disposition: attachment; filename="book_title.pdf"
+      // This overrides the random internal public ID (e.g. file_vff63x) with the
+      // actual book title. GCS URLs already have the correct name in their path.
+      if (fileUrl.includes('cloudinary.com') && fileUrl.includes('/upload/')) {
+        downloadUrl = fileUrl.replace('/upload/', `/upload/fl_attachment:${safeFilename}/`);
+      }
+
+      return res.json({ url: downloadUrl, filename: safeFilename });
     } else {
       const filePath = path.join(__dirname, '../../', fileUrl);
       if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
