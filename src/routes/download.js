@@ -20,10 +20,13 @@ router.get('/:bookId', async (req, res) => {
 
       // For Cloudinary URLs: inject fl_attachment:filename so Cloudinary sends
       // Content-Disposition: attachment; filename="book_title.pdf"
-      // This overrides the random internal public ID (e.g. file_vff63x) with the
-      // actual book title. GCS URLs already have the correct name in their path.
+      // Strip the .pdf extension from the attachment name — Cloudinary's URL parser
+      // treats dots as extension separators and returns 400 if they appear in the
+      // transformation parameter. Cloudinary appends the original file extension
+      // automatically, so the downloaded file still gets the .pdf suffix.
       if (fileUrl.includes('cloudinary.com') && fileUrl.includes('/upload/')) {
-        downloadUrl = fileUrl.replace('/upload/', `/upload/fl_attachment:${safeFilename}/`);
+        const attachmentName = safeFilename.replace(/\.pdf$/i, '');
+        downloadUrl = fileUrl.replace('/upload/', `/upload/fl_attachment:${attachmentName}/`);
       }
 
       return res.json({ url: downloadUrl, filename: safeFilename });
