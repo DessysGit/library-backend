@@ -144,8 +144,25 @@ All endpoints relative to your backend URL. Protected routes accept `Authorizati
 | `GET` | `/download/:bookId` | Get PDF URL |
 | `GET` | `/recommendations` | AI book suggestions |
 | `POST` | `/subscribe` | Newsletter signup |
-| `POST` | `/api/chat` | Chatbot message |
+| `POST` | `/api/chat` | Chatbot message (accepts JWT for personalized responses) |
+| `POST` | `/api/chat/reset` | Reset chatbot session |
+| `GET` | `/api/chat/health` | Chatbot health check |
 | `GET` | `/health` | Health check |
+
+### Chatbot Capabilities
+
+The LibBot chatbot is a **context-aware assistant** built specifically for Des2 Library:
+
+| Category | What it knows |
+|---|---|
+| **Books** | Real-time book counts, genre listings, searching by title/author/genre |
+| **Account** | Login flow, registration, password reset, email verification |
+| **Profile** | How to access/edit profile, favorites, password changes |
+| **Downloads** | Download instructions with login context awareness |
+| **Reviews** | Rating system (1-5 stars), review submission |
+| **Recommendations** | Personalized book suggestions (requires login) |
+
+The chatbot has security guardrails to prevent revealing credentials, environment variables, or admin backend details.
 
 ### Analytics (Admin)
 
