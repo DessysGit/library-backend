@@ -9,7 +9,7 @@ async function resolveUser(req) {
   if (req.isAuthenticated && req.isAuthenticated()) return true;
 
   // Try JWT fallback
-  const authHeader = req.headers['authorization'];
+  const authHeader = req.headers && req.headers['authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     try {
