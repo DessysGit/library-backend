@@ -1,5 +1,5 @@
 /**
- * Des2 Library - Main Server Entry Point
+ * Tesano Community Library - Main Server Entry Point
  * 
  * This file is responsible for:
  * 1. Loading environment variables
@@ -9,6 +9,8 @@
  * 5. Starting the Express server
  * 
  * The actual Express app configuration is in src/app.js
+ * 
+ * Built for the Tesano Community, Accra, Ghana
  */
 
 // Load environment variables from .env file (quietly)
