@@ -185,6 +185,9 @@ const analyticsRoutes = require('./routes/analytics');        // Admin analytics
 const membershipRoutes = require('./routes/membership');      // Community membership
 const borrowingRoutes = require('./routes/borrowing');        // Physical book borrowing
 const eventsRoutes = require('./routes/events');              // Community events
+const reservationsRoutes = require('./routes/reservations');  // Book reservations
+const finesRoutes = require('./routes/fines');                // Fine management
+const challengesRoutes = require('./routes/challenges');      // Reading challenges
 
 // ============================================
 // REGISTER ROUTES
@@ -213,6 +216,9 @@ app.use('/analytics', analyticsRoutes);            // Analytics endpoints: /anal
 app.use('/membership', membershipRoutes);          // Membership endpoints: /membership/*
 app.use('/borrow', borrowingRoutes);               // Borrowing endpoints: /borrow/*
 app.use('/events', eventsRoutes);                  // Events endpoints: /events/*
+app.use('/reservations', reservationsRoutes);      // Reservations endpoints: /reservations/*
+app.use('/fines', finesRoutes);                    // Fines endpoints: /fines/*
+app.use('/challenges', challengesRoutes);          // Challenges endpoints: /challenges/*
 
 // ============================================
 // HEALTH CHECK ENDPOINTS
