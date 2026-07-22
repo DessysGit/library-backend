@@ -99,6 +99,14 @@ router.post('/return/:borrowId', isAuthenticated, async (req, res) => {
       ['returned', fine, borrowId]
     );
 
+    // Create a fine record in the fines table if overdue
+    if (fine > 0) {
+      await pool.query(
+        'INSERT INTO fines ("userId", "borrowId", amount, reason, status) VALUES ($1, $2, $3, $4, $5)',
+        [borrow.userId, borrowId, fine, 'Overdue book return', 'unpaid']
+      );
+    }
+
     const message = fine > 0 
       ? `Book returned successfully. An overdue fine of GHS ${fine.toFixed(2)} has been applied.`
       : 'Book returned successfully. Thank you!';
