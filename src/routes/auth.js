@@ -167,7 +167,7 @@ router.get('/verify-email', async (req, res) => {
       <html>
         <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
           <h2 style="color: #1DB954;">Email Verified Successfully!</h2>
-          <p>Welcome to Des2 Library, ${user.username}!</p>
+          <p>Welcome to Tesano Community Library, ${user.username}!</p>
           <p>You can now log in to your account.</p>
           <a href="${FRONTEND_URL}" style="display: inline-block; background-color: #1DB954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 20px;">Go to Login</a>
         </body>

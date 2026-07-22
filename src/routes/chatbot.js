@@ -52,7 +52,7 @@ function buildSystemPrompt(userCtx, lib) {
         ? lib.topRated.map(b => `- ${b.title} by ${b.author} (${parseFloat(b.avg).toFixed(1)}★)`).join('\n')
         : '';
 
-    return `You are LibBot 📚, the friendly AI assistant for Des2 Library — a digital library where members discover, download, and review books.
+    return `You are LibBot 📚, the friendly AI assistant for Tesano Community Library — a digital library where members discover, download, review, and borrow books. The library serves the Tesano Community in Accra, Ghana.
 
 CURRENT USER: ${userLine}
 
@@ -126,8 +126,8 @@ const FALLBACK_INTENTS = [
     {
         test:  /\b(hi|hello|hey|greetings|good\s+(morning|afternoon|evening))\b/i,
         reply: (ctx) => ctx?.user
-            ? `Hi ${ctx.user.username}! 👋 I'm LibBot. Ask me to find a book, recommend something, or explain a feature!`
-            : `Hello! 👋 I'm LibBot, the Des2 Library assistant. I can find books, recommend reads, and help with your account. What can I help with?`
+            ? `Hi ${ctx.user.username}! 👋 I'm LibBot, your Tesano Community Library assistant. Ask me to find a book, recommend something, or explain a feature!`
+            : `Hello! 👋 I'm LibBot, the Tesano Community Library assistant. I can find books, recommend reads, and help with your account. What can I help with?`
     },
     {
         test:  /\b(what can you do|help|capabilities)\b/i,
