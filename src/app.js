@@ -1,5 +1,5 @@
 /**
- * Des2 Library - Express Application Configuration
+ * Tesano Community Library - Express Application Configuration
  * 
  * This file configures the Express.js application with:
  * - Middleware (CORS, body parsing, sessions)
@@ -7,6 +7,8 @@
  * - Route registration
  * - Static file serving
  * - Error handling
+ * 
+ * Built for the Tesano Community, Accra, Ghana
  * 
  * This is imported and used by server.js
  */
@@ -180,6 +182,9 @@ const newsletterRoutes = require('./routes/newsletter');      // Newsletter subs
 const downloadRoutes = require('./routes/download');          // File downloads
 const chatbotRoutes = require('./routes/chatbot');           // AI chatbot
 const analyticsRoutes = require('./routes/analytics');        // Admin analytics
+const membershipRoutes = require('./routes/membership');      // Community membership
+const borrowingRoutes = require('./routes/borrowing');        // Physical book borrowing
+const eventsRoutes = require('./routes/events');              // Community events
 
 // ============================================
 // REGISTER ROUTES
@@ -205,6 +210,9 @@ app.use('/', newsletterRoutes);                    // Newsletter at root level
 app.use('/download', downloadRoutes);              // Download endpoints: /download/*
 app.use('/api', chatbotRoutes);                    // Chatbot endpoints: /api/*
 app.use('/analytics', analyticsRoutes);            // Analytics endpoints: /analytics/*
+app.use('/membership', membershipRoutes);          // Membership endpoints: /membership/*
+app.use('/borrow', borrowingRoutes);               // Borrowing endpoints: /borrow/*
+app.use('/events', eventsRoutes);                  // Events endpoints: /events/*
 
 // ============================================
 // HEALTH CHECK ENDPOINTS
