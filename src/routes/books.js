@@ -68,7 +68,9 @@ router.get('/', optionalAuth, async (req, res) => {
     const booksWithAdminFlag = rows.map(book => ({
       ...book,
       isAdmin: isAdminUser,
-      averageRating: parseFloat(book.averagerating) || 0
+      averageRating: parseFloat(book.averagerating) || 0,
+      hasPhysicalCopy: true,
+      hasDigitalCopy: !!(book.file || book.pdf || book.document)
     }));
 
     // Fetch total ratings for each book
@@ -83,6 +85,8 @@ router.get('/', optionalAuth, async (req, res) => {
     
     booksWithAdminFlag.forEach(book => {
       book.totalRatings = ratingsMap[book.id] || 0;
+      book.hasPhysicalCopy = book.hasPhysicalCopy !== false;
+      book.hasDigitalCopy = !!(book.file || book.pdf || book.document);
     });
 
     res.json({ books: booksWithAdminFlag, total: count });
