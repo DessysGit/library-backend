@@ -168,7 +168,7 @@ router.get('/leaderboard', async (req, res) => {
               (SELECT COUNT(*) FROM badges WHERE "userId" = u.id) AS badges
        FROM users u
        LEFT JOIN borrowed_books bb ON bb."userId" = u.id AND bb.status = 'returned'
-       GROUP BY u.id
+       GROUP BY u.id, u.username, u."profilePicture"
        ORDER BY "booksBorrowed" DESC
        LIMIT 20`
     );

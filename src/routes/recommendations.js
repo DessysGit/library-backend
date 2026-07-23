@@ -67,8 +67,8 @@ router.get('/', isAuthenticated, async (req, res) => {
     const userLikesResult = await pool.query(
       `SELECT b.id, b.title, b.author, b.genres 
        FROM books b
-       INNER JOIN book_likes bl ON b.id = bl.book_id
-       WHERE bl.user_id = $1 AND bl.liked = true`,
+       INNER JOIN likes bl ON b.id = bl."bookId"
+       WHERE bl."userId" = $1 AND bl.action = 'like'`,
       [userId]
     );
     userLikes = userLikesResult.rows;
