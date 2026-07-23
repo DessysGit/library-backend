@@ -309,15 +309,6 @@ async function ensureTables() {
       `);
 
       // Add phone and address columns to users if not present
-</parameter>
-<parameter=task_progress>
-- [x] Phase 1-7: Complete all existing work
-- [ ] Feature 1: Book Reservation & Queue System
-- [ ] Feature 2: Fine Management & Payment System
-- [ ] Feature 3: Enhanced Events with Calendar & Notifications
-- [ ] Feature 4: Community Analytics Dashboard
-- [ ] Feature 5: Reading Challenges & Goals
-</parameter>
       try {
         await client.query(`
           ALTER TABLE users 
