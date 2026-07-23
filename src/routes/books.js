@@ -198,7 +198,7 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
         fs.writeFileSync(coverPath, coverFile.buffer);
         coverUrl = `/uploads/${path.basename(coverPath)}`;
       }
-      if (!hasDriveLink && req.files['bookFile']) {
+      if (req.files['bookFile']) {
         const bookFile = req.files['bookFile'][0];
         const bookPath = path.join(uploadDir, Date.now() + '-' + bookFile.originalname);
         fs.writeFileSync(bookPath, bookFile.buffer);

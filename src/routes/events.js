@@ -37,7 +37,12 @@ router.get('/', async (req, res) => {
        ORDER BY e."eventDate" ASC`
     );
 
-    res.json(result.rows);
+    const events = result.rows.map(e => ({
+      ...e,
+      isRegistered: false
+    }));
+
+    res.json(events);
   } catch (err) {
     console.error('Error listing events:', err);
     res.status(500).json({ error: 'Failed to list events' });
@@ -111,6 +116,30 @@ router.post('/:id/register', isAuthenticated, async (req, res) => {
   } catch (err) {
     console.error('Error registering for event:', err);
     res.status(500).json({ error: 'Failed to register for event' });
+  }
+});
+
+// Get my event registrations
+router.get('/my/registrations', isAuthenticated, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const result = await pool.query(
+      `SELECT e.*, u.username AS "createdByUsername",
+              (SELECT COUNT(*) FROM event_registrations WHERE "eventId" = e.id) AS "registrations",
+              true as "isRegistered"
+       FROM events e
+       JOIN users u ON u.id = e."createdBy"
+       JOIN event_registrations er ON er."eventId" = e.id
+       WHERE er."userId" = $1
+       ORDER BY e."eventDate" ASC`,
+      [userId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching my registrations:', err);
+    res.status(500).json({ error: 'Failed to fetch registrations' });
   }
 });
 
