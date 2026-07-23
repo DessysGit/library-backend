@@ -308,6 +308,21 @@ async function ensureTables() {
         )
       `);
 
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS user_activity (
+          id SERIAL PRIMARY KEY,
+          "userId" INTEGER NOT NULL,
+          type TEXT NOT NULL,
+          "bookId" INTEGER,
+          "bookTitle" TEXT,
+          rating INTEGER,
+          text TEXT,
+          "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+          FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY ("bookId") REFERENCES books(id) ON DELETE SET NULL
+        )
+      `);
+
       // Add phone and address columns to users if not present
       try {
         await client.query(`
