@@ -317,6 +317,8 @@ async function ensureTables() {
           "bookTitle" TEXT,
           rating INTEGER,
           text TEXT,
+          severity TEXT DEFAULT 'neutral',
+          details JSONB DEFAULT '{}',
           "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
           FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
           FOREIGN KEY ("bookId") REFERENCES books(id) ON DELETE SET NULL
@@ -330,6 +332,17 @@ async function ensureTables() {
           ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT '',
           ADD COLUMN IF NOT EXISTS address TEXT DEFAULT '',
           ADD COLUMN IF NOT EXISTS "isLibraryMember" BOOLEAN DEFAULT FALSE
+        `);
+      } catch (e) {
+        // Columns may already exist - that's fine
+      }
+
+      // Add severity and details columns to user_activity if not present
+      try {
+        await client.query(`
+          ALTER TABLE user_activity 
+          ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'neutral',
+          ADD COLUMN IF NOT EXISTS details JSONB DEFAULT '{}'
         `);
       } catch (e) {
         // Columns may already exist - that's fine
