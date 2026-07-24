@@ -301,7 +301,7 @@ router.get('/recent-activity', isAdmin, async (req, res) => {
         b.title as book_title,
         'review' as type
       FROM reviews r
-      JOIN books b ON r.bookid = b.id
+      LEFT JOIN books b ON r.bookid = b.id
       ORDER BY r.created_at DESC
       LIMIT 8
     `);
