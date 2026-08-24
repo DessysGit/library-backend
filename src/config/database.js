@@ -181,20 +181,6 @@ async function ensureTables() {
       `);
 
       // ── Tesano Community Library Tables ──────────────────────────────────
-      
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS memberships (
-          id SERIAL PRIMARY KEY,
-          "userId" INTEGER NOT NULL,
-          "membershipType" TEXT NOT NULL DEFAULT 'standard',
-          "startDate" TIMESTAMP NOT NULL DEFAULT NOW(),
-          "endDate" TIMESTAMP,
-          status TEXT NOT NULL DEFAULT 'active',
-          "libraryCardNumber" TEXT UNIQUE,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE
-        )
-      `);
 
       await client.query(`
         CREATE TABLE IF NOT EXISTS borrowed_books (
@@ -208,32 +194,6 @@ async function ensureTables() {
           fine DECIMAL(10,2) DEFAULT 0,
           FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
           FOREIGN KEY ("bookId") REFERENCES books(id) ON DELETE CASCADE
-        )
-      `);
-
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS events (
-          id SERIAL PRIMARY KEY,
-          title TEXT NOT NULL,
-          description TEXT,
-          "eventDate" TIMESTAMP NOT NULL,
-          location TEXT,
-          "maxAttendees" INTEGER,
-          "createdBy" INTEGER NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY ("createdBy") REFERENCES users(id) ON DELETE CASCADE
-        )
-      `);
-
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS event_registrations (
-          id SERIAL PRIMARY KEY,
-          "eventId" INTEGER NOT NULL,
-          "userId" INTEGER NOT NULL,
-          "registeredAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE("eventId", "userId"),
-          FOREIGN KEY ("eventId") REFERENCES events(id) ON DELETE CASCADE,
-          FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE
         )
       `);
 
@@ -330,8 +290,7 @@ async function ensureTables() {
         await client.query(`
           ALTER TABLE users 
           ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT '',
-          ADD COLUMN IF NOT EXISTS address TEXT DEFAULT '',
-          ADD COLUMN IF NOT EXISTS "isLibraryMember" BOOLEAN DEFAULT FALSE
+          ADD COLUMN IF NOT EXISTS address TEXT DEFAULT ''
         `);
       } catch (e) {
         // Columns may already exist - that's fine
