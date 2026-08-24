@@ -32,8 +32,6 @@ const ActivityTypes = {
   ADJUST_FINE: 'adjust_fine',
   FULFILL_RESERVATION: 'fulfill_reservation',
   CANCEL_RESERVATION_ADMIN: 'cancel_reservation_admin',
-  CREATE_EVENT: 'create_event',
-  DELETE_EVENT: 'delete_event',
   
   // System events
   FAILED_LOGIN: 'failed_login',
