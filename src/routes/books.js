@@ -82,11 +82,21 @@ router.get('/', optionalAuth, async (req, res) => {
       const ratingsResult = await pool.query(ratingQuery, bookIds);
       ratingsMap = Object.fromEntries(ratingsResult.rows.map(r => [r.bookid, r.totalratings]));
     }
-    
+
+    // Determine physical availability: a copy is unavailable while actively borrowed
+    let unavailableSet = {};
+    if (bookIds.length > 0) {
+      const inPlaceholders = bookIds.map((_, i) => `$${i + 1}`).join(', ');
+      const borrowedQuery = `SELECT DISTINCT "bookId" FROM borrowed_books WHERE "bookId" IN (${inPlaceholders}) AND status = 'borrowed'`;
+      const borrowedResult = await pool.query(borrowedQuery, bookIds);
+      unavailableSet = Object.fromEntries(borrowedResult.rows.map(r => [r.bookid, true]));
+    }
+
     booksWithAdminFlag.forEach(book => {
       book.totalRatings = ratingsMap[book.id] || 0;
       book.hasPhysicalCopy = book.hasPhysicalCopy !== false;
       book.hasDigitalCopy = !!(book.file || book.pdf || book.document);
+      book.isAvailable = !unavailableSet[book.id];
     });
 
     res.json({ books: booksWithAdminFlag, total: count });

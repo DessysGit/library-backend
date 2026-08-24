@@ -9,15 +9,6 @@ router.post('/:bookId', isAuthenticated, async (req, res) => {
   const bookId = parseInt(req.params.bookId);
 
   try {
-    // Check if user is a library member
-    const userResult = await pool.query(
-      'SELECT "isLibraryMember" FROM users WHERE id = $1',
-      [userId]
-    );
-    if (!userResult.rows[0]?.isLibraryMember) {
-      return res.status(403).json({ error: 'You need an active library membership to borrow books. Apply at /membership/apply' });
-    }
-
     // Check if book exists
     const bookResult = await pool.query('SELECT id, title FROM books WHERE id = $1', [bookId]);
     if (bookResult.rows.length === 0) {
@@ -33,13 +24,13 @@ router.post('/:bookId', isAuthenticated, async (req, res) => {
       return res.status(400).json({ error: 'This book is currently checked out by another member' });
     }
 
-    // Check borrowing limit (max 5 books at a time)
+    // Check borrowing limit (max 3 books at a time)
     const borrowCount = await pool.query(
       'SELECT COUNT(*) AS count FROM borrowed_books WHERE "userId" = $1 AND status = $2',
       [userId, 'borrowed']
     );
-    if (parseInt(borrowCount.rows[0].count) >= 5) {
-      return res.status(400).json({ error: 'You have reached the maximum borrowing limit (5 books). Return some books first.' });
+    if (parseInt(borrowCount.rows[0].count) >= 3) {
+      return res.status(400).json({ error: 'You have reached the maximum borrowing limit (3 books). Return some books first.' });
     }
 
     // Create borrow record (14-day borrowing period)
