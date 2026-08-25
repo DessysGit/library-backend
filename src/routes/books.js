@@ -89,7 +89,7 @@ router.get('/', optionalAuth, async (req, res) => {
       const inPlaceholders = bookIds.map((_, i) => `$${i + 1}`).join(', ');
       const borrowedQuery = `SELECT DISTINCT "bookId" FROM borrowed_books WHERE "bookId" IN (${inPlaceholders}) AND status = 'borrowed'`;
       const borrowedResult = await pool.query(borrowedQuery, bookIds);
-      unavailableSet = Object.fromEntries(borrowedResult.rows.map(r => [r.bookid, true]));
+      unavailableSet = Object.fromEntries(borrowedResult.rows.map(r => [r.bookId, true]));
     }
 
     booksWithAdminFlag.forEach(book => {
