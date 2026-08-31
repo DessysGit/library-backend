@@ -43,11 +43,11 @@ router.get('/:bookId', async (req, res) => {
 
     const safeFilename = (title || 'book').replace(/[^a-z0-9]/gi, '_').toLowerCase() + '.pdf';
 
-    // ── Proxy mode: frontend is fetching binary to create a blob URL ───────────
-    // Server fetches from Cloudinary and streams back with the correct
-    // Content-Disposition so the blob download gets the right filename.
+    // ── Proxy mode: frontend is fetching binary for in-site reading ─────────────
+    // Server fetches from Cloudinary and streams back with Content-Disposition
+    // set to inline so the PDF is rendered in the browser reader, not downloaded.
     if (proxyMode && fileUrl.includes('cloudinary.com')) {
-      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+      res.setHeader('Content-Disposition', `inline; filename="${safeFilename}"`);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Cache-Control', 'private');
       try {

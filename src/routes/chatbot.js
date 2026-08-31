@@ -52,7 +52,7 @@ function buildSystemPrompt(userCtx, lib) {
         ? lib.topRated.map(b => `- ${b.title} by ${b.author} (${parseFloat(b.avg).toFixed(1)}★)`).join('\n')
         : '';
 
-    return `You are LibBot 📚, the friendly AI assistant for Tesano Community Library — a digital library where members discover, download, review, and borrow books. The library serves the Tesano Community in Accra, Ghana.
+    return `You are LibBot 📚, the friendly AI assistant for Tesano Community Library — a digital library where members discover, read, review, and borrow books. The library serves the Tesano Community in Accra, Ghana.
 
 CURRENT USER: ${userLine}
 
@@ -66,8 +66,8 @@ ${bookList}
 
 HOW THE LIBRARY WORKS:
 - Users search books by title, author, or genre on the main page
-- Clicking a book opens its detail page with a Download button, reviews, and ratings
-- Books download as PDFs; users must be logged in to download
+- Clicking a book opens its detail page with a Read button, reviews, and ratings
+- Books are read directly on the site — no downloads available
 - Users can leave star ratings (1-5) and written reviews on book detail pages
 - The profile page shows activity, reading history, and preferences
 - Password reset: click "Forgot your password?" on the login page
@@ -77,7 +77,7 @@ HOW THE LIBRARY WORKS:
 YOUR RULES:
 1. Only recommend books that appear in the catalog above
 2. Keep replies concise — under 150 words unless listing multiple books
-3. Use **bold** for book titles and key UI elements (like **Download** button)
+3. Use **bold** for book titles and key UI elements (like **Read** button)
 4. Use bullet points for lists
 5. Be warm, encouraging, and helpful
 6. If asked about unrelated topics, politely redirect to library features
@@ -131,17 +131,19 @@ const FALLBACK_INTENTS = [
     },
     {
         test:  /\b(what can you do|help|capabilities)\b/i,
-        reply: () => `**I can help you with:**\n\n📚 Find books by title, author, or genre\n⭐ Explain ratings and reviews\n📥 Guide you through downloading\n👤 Account setup, login, password reset\n🔍 Search tips and filters\n\nJust ask!`
+        reply: () => `**I can help you with:**\n\n📚 Find books by title, author, or genre\n⭐ Explain ratings and reviews\n📖 Guide you through reading on the site\n👤 Account setup, login, password reset\n🔍 Search tips and filters\n\nJust ask!`
     },
     {
         test:  /\b(recommend|suggest|what.*read|good books?|popular|top)\b/i,
         reply: () => `Browse the main page and use the genre filter to discover books! Highly-rated books show star ratings. Set your favourite genres in your profile for personalised suggestions.`
     },
     {
+        test:  /\b(read|reading|open.*book|view.*book|online)\b/i,
+        reply: () => `Click any book → open its detail page → click the green **Read Book** button. The book opens right in your browser — no download needed!\n\nUse ← → arrow keys to turn pages, +/- to zoom, and Esc to close the reader.`
+    },
+    {
         test:  /\b(download|get.*book|pdf|offline)\b/i,
-        reply: (ctx) => ctx?.user
-            ? `Click any book → open its detail page → click the green **Download** button. The PDF saves to your device!`
-            : `You need to be **logged in** to download books. Sign in first, then click **Download** on any book's detail page.`
+        reply: () => `Books are read directly on the site — downloads aren't available. Just click **Read Book** on any book's detail page to start reading instantly!`
     },
     {
         test:  /\b(register|sign up|create.*account|new.*account)\b/i,
