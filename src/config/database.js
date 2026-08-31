@@ -285,6 +285,20 @@ async function ensureTables() {
         )
       `);
 
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS reading_progress (
+          id SERIAL PRIMARY KEY,
+          "userId" INTEGER NOT NULL,
+          "bookId" INTEGER NOT NULL,
+          "lastPage" INTEGER NOT NULL DEFAULT 1,
+          "totalPages" INTEGER,
+          "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW(),
+          UNIQUE("userId", "bookId"),
+          FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY ("bookId") REFERENCES books(id) ON DELETE CASCADE
+        )
+      `);
+
       // Add phone and address columns to users if not present
       try {
         await client.query(`
