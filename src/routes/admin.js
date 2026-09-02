@@ -127,6 +127,57 @@ router.delete('/reservations/:id', isAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to cancel reservation' });
   }
 });
+// ==================== BOOK INVENTORY ====================
+
+// Get physical copy inventory for all books
+router.get('/inventory', isAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT b.id, b.title, b.author, b."physicalCopies",
+             (SELECT COUNT(*) FROM borrowed_books bb
+              WHERE bb."bookId" = b.id AND bb.status = 'borrowed') AS "activeBorrows"
+      FROM books b
+      ORDER BY b.title ASC
+    `);
+    const books = result.rows.map(b => ({
+      ...b,
+      physicalCopies: b.physicalCopies || 1,
+      availableCopies: Math.max(0, (b.physicalCopies || 1) - parseInt(b.activeBorrows || 0))
+    }));
+    res.json(books);
+  } catch (error) {
+    console.error('Error fetching inventory:', error);
+    res.status(500).json({ error: 'Failed to fetch inventory' });
+  }
+});
+
+// Adjust physical copy count for a book
+router.post('/inventory/:id/copies', isAdmin, async (req, res) => {
+  const bookId = req.params.id;
+  const newCount = parseInt(req.body.physicalCopies);
+  if (isNaN(newCount) || newCount < 0) {
+    return res.status(400).json({ error: 'Invalid copy count' });
+  }
+  try {
+    const result = await pool.query(
+      'UPDATE books SET "physicalCopies" = $1 WHERE id = $2 RETURNING id, title, "physicalCopies"',
+      [newCount, bookId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Book not found' });
+    }
+    await logActivity(req.user.id, ActivityTypes.UPDATE_BOOK, {
+      bookId,
+      physicalCopies: newCount
+    }, SeverityLevels.NEUTRAL);
+    res.json({ message: 'Copy count updated', book: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating copies:', error);
+    res.status(500).json({ error: 'Failed to update copy count' });
+  }
+});
+
+// ==================== BORROWING MANAGEMENT ====================
 
 // ==================== BORROWING MANAGEMENT ====================
 
