@@ -88,10 +88,15 @@ async function initialize() {
     await seedAdmin();
     logger.info('Admin user verified');
     
-    // Update average ratings for all books
-    await recalculateAverageRatings();
-    logger.info('Book ratings recalculated');
-    
+    // Update average ratings for all books — DEFERRED until after the server
+    // is listening so free-tier cold starts serve requests as fast as possible
+    // (this was the single slowest step in boot, ~10-15s on Render).
+    setTimeout(() => {
+      recalculateAverageRatings()
+        .then(() => logger.info('Book ratings recalculated (deferred)'))
+        .catch(err => logger.error('Deferred ratings recalculation failed', { error: err.message }));
+    }, 15000);
+
     // Start the Express server
     startServer(false);
     
