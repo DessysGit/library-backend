@@ -1,0 +1,33 @@
+name: Keep Backend Warm
+
+# Free-tier hosts (Render free) spin the backend down after ~15 min of
+# inactivity, making the first visitor wait 30-60s. This workflow pings the
+# /health endpoint every 10 minutes so the service stays warm.
+# NOTE: GitHub scheduled workflows can occasionally be delayed by a few
+# minutes; that's usually still within the 15-minute idle window.
+# Render may detect pure keep-alive pingers — if warm-up pauses return,
+# the frontend's "waking up" splash covers those cases gracefully.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # allows manual trigger from the Actions tab
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend /health
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 https://library-backend-j90e.onrender.com/health || echo "000")
+            echo "Attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 15
+          done
+          echo "Backend did not respond 200 after 3 attempts (it may have been waking up — that's fine, the ping still counts as traffic)."
+          exit 0
