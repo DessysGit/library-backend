@@ -80,6 +80,14 @@ app.use(cors({
 // Trust proxy - important for production (Render, Heroku, etc.)
 app.set('trust proxy', 1);
 
+// Health check endpoint — intentionally registered BEFORE heavy middleware
+// (session store, body parsing) so uptime pings get an instant response and
+// the frontend "waking up" splash can poll it during free-tier cold starts.
+app.get('/health', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+});
+
 // Parse JSON request bodies
 app.use(express.json());
 
