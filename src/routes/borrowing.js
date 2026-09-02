@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
+const { logActivity, ActivityTypes, SeverityLevels } = require('../middleware/activityLogger');
 
 // Checkout / borrow a physical book
 router.post('/:bookId', isAuthenticated, async (req, res) => {
@@ -9,19 +10,23 @@ router.post('/:bookId', isAuthenticated, async (req, res) => {
   const bookId = parseInt(req.params.bookId);
 
   try {
-    // Check if book exists
-    const bookResult = await pool.query('SELECT id, title FROM books WHERE id = $1', [bookId]);
+    // Check if book exists and get copy count
+    const bookResult = await pool.query('SELECT id, title, "physicalCopies" FROM books WHERE id = $1', [bookId]);
     if (bookResult.rows.length === 0) {
       return res.status(404).json({ error: 'Book not found' });
     }
 
-    // Check if book is currently borrowed
+    const totalCopies = bookResult.rows[0].physicalCopies || 1;
+
+    // Check how many copies are currently borrowed
     const activeBorrow = await pool.query(
-      'SELECT id FROM borrowed_books WHERE "bookId" = $1 AND status = $2',
+      'SELECT COUNT(*) AS count FROM borrowed_books WHERE "bookId" = $1 AND status = $2',
       [bookId, 'borrowed']
     );
-    if (activeBorrow.rows.length > 0) {
-      return res.status(400).json({ error: 'This book is currently checked out by another member' });
+    const activeCount = parseInt(activeBorrow.rows[0].count) || 0;
+
+    if (activeCount >= totalCopies) {
+      return res.status(400).json({ error: 'All copies of this book are currently checked out. Please reserve a copy instead.' });
     }
 
     // Check borrowing limit (max 3 books at a time)
@@ -40,6 +45,12 @@ router.post('/:bookId', isAuthenticated, async (req, res) => {
       [userId, bookId, dueDate]
     );
 
+    await logActivity(userId, ActivityTypes.BORROW, {
+      bookId,
+      bookTitle: bookResult.rows[0].title,
+      borrowId: result.rows[0].id
+    }, SeverityLevels.NEUTRAL);
+
     res.status(201).json({
       message: `Successfully borrowed "${bookResult.rows[0].title}". Due back: ${dueDate.toLocaleDateString()}`,
       borrow: result.rows[0]
@@ -57,7 +68,10 @@ router.post('/return/:borrowId', isAuthenticated, async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, "userId", "dueDate", status FROM borrowed_books WHERE id = $1',
+      `SELECT bb.id, bb."userId", bb."dueDate", bb.status, bb."bookId", b.title
+       FROM borrowed_books bb
+       LEFT JOIN books b ON b.id = bb."bookId"
+       WHERE bb.id = $1`,
       [borrowId]
     );
 
@@ -101,6 +115,15 @@ router.post('/return/:borrowId', isAuthenticated, async (req, res) => {
     const message = fine > 0 
       ? `Book returned successfully. An overdue fine of GHS ${fine.toFixed(2)} has been applied.`
       : 'Book returned successfully. Thank you!';
+
+    await logActivity(borrow.userId, ActivityTypes.RETURN, {
+      borrowId,
+      bookId: borrow.bookId,
+      bookTitle: borrow.title,
+      returnedBy: req.user.id === borrow.userId ? 'self' : req.user.username,
+      fine: fine > 0 ? fine : undefined,
+      overdue: fine > 0
+    }, SeverityLevels.NEUTRAL);
 
     res.json({ message, fine });
   } catch (err) {

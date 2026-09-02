@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const { isAuthenticated } = require('../middleware/auth');
+const { logActivity, ActivityTypes, SeverityLevels } = require('../middleware/activityLogger');
 
 // Get reviews for a book
 router.get('/:bookId/reviews', async (req, res) => {
@@ -64,6 +65,12 @@ router.post('/:bookId/reviews', isAuthenticated, async (req, res) => {
       'UPDATE books SET averagerating = $1 WHERE id = $2', 
       [averageRating, bookId]
     );
+
+    await logActivity(userId, ActivityTypes.REVIEW, {
+      bookId,
+      rating,
+      text
+    }, SeverityLevels.POSITIVE);
 
     res.status(201).json({ 
       message: 'Review added successfully', 

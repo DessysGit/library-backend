@@ -16,6 +16,7 @@ const {
   ALLOWED_FILE_TYPES 
 } = require('../utils/fileValidation');
 const { deleteCoverFromCloudinary, deletePdfFromCloudinary } = require('../utils/cloudinaryHelpers');
+const { logActivity, ActivityTypes, SeverityLevels } = require('../middleware/activityLogger');
 
 // Configure multer with memory storage, file validation, and size limits
 const upload = multer({ 
@@ -69,8 +70,9 @@ router.get('/', optionalAuth, async (req, res) => {
       ...book,
       isAdmin: isAdminUser,
       averageRating: parseFloat(book.averagerating) || 0,
-      hasPhysicalCopy: true,
-      hasDigitalCopy: !!(book.file || book.pdf || book.document)
+      hasPhysicalCopy: (book.physicalCopies || 1) > 0,
+      hasDigitalCopy: !!(book.file || book.pdf || book.document),
+      physicalCopies: book.physicalCopies || 1
     }));
 
     // Fetch total ratings for each book
@@ -83,20 +85,22 @@ router.get('/', optionalAuth, async (req, res) => {
       ratingsMap = Object.fromEntries(ratingsResult.rows.map(r => [r.bookid, r.totalratings]));
     }
 
-    // Determine physical availability: a copy is unavailable while actively borrowed
-    let unavailableSet = {};
+    // Determine physical availability: count active borrows per book
+    let borrowedCounts = {};
     if (bookIds.length > 0) {
       const inPlaceholders = bookIds.map((_, i) => `$${i + 1}`).join(', ');
-      const borrowedQuery = `SELECT DISTINCT "bookId" FROM borrowed_books WHERE "bookId" IN (${inPlaceholders}) AND status = 'borrowed'`;
+      const borrowedQuery = `SELECT "bookId", COUNT(*) AS count FROM borrowed_books WHERE "bookId" IN (${inPlaceholders}) AND status = 'borrowed' GROUP BY "bookId"`;
       const borrowedResult = await pool.query(borrowedQuery, bookIds);
-      unavailableSet = Object.fromEntries(borrowedResult.rows.map(r => [r.bookId, true]));
+      borrowedCounts = Object.fromEntries(borrowedResult.rows.map(r => [r.bookid, parseInt(r.count) || 0]));
     }
 
     booksWithAdminFlag.forEach(book => {
       book.totalRatings = ratingsMap[book.id] || 0;
-      book.hasPhysicalCopy = book.hasPhysicalCopy !== false;
+      book.hasPhysicalCopy = (book.physicalCopies || 1) > 0;
       book.hasDigitalCopy = !!(book.file || book.pdf || book.document);
-      book.isAvailable = !unavailableSet[book.id];
+      const activeBorrows = borrowedCounts[book.id] || 0;
+      book.isAvailable = activeBorrows < (book.physicalCopies || 1);
+      book.availableCopies = Math.max(0, (book.physicalCopies || 1) - activeBorrows);
     });
 
     res.json({ books: booksWithAdminFlag, total: count });
@@ -111,7 +115,7 @@ router.get('/:id', async (req, res) => {
   const bookId = req.params.id;
   try {
     const result = await pool.query(
-      'SELECT id, title, author, genres, summary, description, cover, file, averagerating, likes, dislikes FROM books WHERE id = $1',
+      'SELECT id, title, author, genres, summary, description, cover, file, averagerating, likes, dislikes, "physicalCopies" FROM books WHERE id = $1',
       [bookId]
     );
     if (result.rows.length === 0) return res.status(404).send('Book not found');
@@ -119,6 +123,7 @@ router.get('/:id', async (req, res) => {
     const book = result.rows[0];
     book.averageRating = parseFloat(book.averagerating) || 0;
     delete book.averagerating;
+    book.physicalCopies = book.physicalCopies || 1;
     
     res.json(book);
   } catch (err) {
@@ -135,6 +140,7 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
 
     const { title, author, description } = req.body;
     let genres = req.body.genres;
+    const physicalCopies = Math.max(0, parseInt(req.body.physicalCopies) || 1);
 
     // ── Server-side validation ──────────────────────────────────────────────
     const missing = [];
@@ -217,9 +223,14 @@ router.post('/', isAdmin, upload.fields([{ name: 'cover' }, { name: 'bookFile' }
     }
 
     const inserted = await pool.query(
-      'INSERT INTO books (title, author, description, genres, cover, file) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, title, author',
-      [title, author, description, genres, coverUrl, pdfUrl]
+      'INSERT INTO books (title, author, description, genres, cover, file, "physicalCopies") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, title, author',
+      [title, author, description, genres, coverUrl, pdfUrl, physicalCopies]
     );
+    await logActivity(req.user.id, ActivityTypes.CREATE_BOOK, {
+      bookId: inserted.rows[0].id,
+      bookTitle: inserted.rows[0].title
+    }, SeverityLevels.NEUTRAL);
+
     res.status(200).json({ message: 'Book added successfully', book: inserted.rows[0] });
   } catch (error) {
     console.error('Error uploading book:', error);
@@ -251,6 +262,7 @@ router.put('/:id', isAdmin, (req, res, next) => {
     const author = (req.body && req.body.author) ? req.body.author.trim() : '';
     const description = (req.body && req.body.description) ? req.body.description.trim() : '';
     let genres = (req.body && req.body.genres) ? req.body.genres.trim() : '';
+    const physicalCopies = Math.max(0, parseInt(req.body.physicalCopies) || 1);
     
     // Validate required fields
     if (!title || !author) {
@@ -361,8 +373,8 @@ router.put('/:id', isAdmin, (req, res, next) => {
     
     // Update book in database
     await pool.query(
-      'UPDATE books SET title = $1, author = $2, genres = $3, description = $4, cover = $5, file = $6 WHERE id = $7',
-      [title, author, genres, description, coverUrl, pdfUrl, bookId]
+      'UPDATE books SET title = $1, author = $2, genres = $3, description = $4, cover = $5, file = $6, "physicalCopies" = $7 WHERE id = $8',
+      [title, author, genres, description, coverUrl, pdfUrl, physicalCopies, bookId]
     );
     
     const updatedBook = await pool.query('SELECT * FROM books WHERE id = $1', [bookId]);
@@ -437,6 +449,7 @@ router.post('/:id/like', isAuthenticated, async (req, res) => {
     );
 
     await pool.query('COMMIT');
+    await logActivity(userId, ActivityTypes.LIKE, { bookId }, SeverityLevels.NEUTRAL);
     const bookResult = await pool.query('SELECT likes, dislikes FROM books WHERE id = $1', [bookId]);
     res.json(bookResult.rows[0]);
   } catch (e) {
@@ -470,6 +483,7 @@ router.post('/:id/dislike', isAuthenticated, async (req, res) => {
     );
 
     await pool.query('COMMIT');
+    await logActivity(userId, ActivityTypes.DISLIKE, { bookId }, SeverityLevels.NEUTRAL);
     const bookResult = await pool.query('SELECT likes, dislikes FROM books WHERE id = $1', [bookId]);
     res.json(bookResult.rows[0]);
   } catch (e) {

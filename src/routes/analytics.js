@@ -34,7 +34,7 @@ router.get('/stats', isAdmin, async (req, res) => {
 
     // Total counts
     const [users, books, reviews] = await Promise.all([
-      pool.query('SELECT COUNT(*) as count FROM public.users'),
+      pool.query('SELECT COUNT(*) as count FROM users'),
       pool.query('SELECT COUNT(*) as count FROM books'),
       pool.query('SELECT COUNT(*) as count FROM reviews')
     ]);
@@ -42,7 +42,7 @@ router.get('/stats', isAdmin, async (req, res) => {
     // Recent registrations (last 30 days)
     const recentUsers = await pool.query(`
       SELECT COUNT(*) as count 
-      FROM public.users 
+      FROM users 
       WHERE created_at >= NOW() - INTERVAL '30 days'
     `);
 
@@ -167,7 +167,7 @@ router.get('/user-activity', isAdmin, async (req, res) => {
       SELECT 
         DATE(created_at) as date,
         COUNT(*) as count
-      FROM public.users
+      FROM users
       WHERE created_at >= NOW() - INTERVAL '${interval}'
       GROUP BY DATE(created_at)
       ORDER BY date ASC
@@ -314,7 +314,7 @@ router.get('/recent-activity', isAdmin, async (req, res) => {
         email,
         created_at,
         'user' as type
-      FROM public.users
+      FROM users
       ORDER BY created_at DESC
       LIMIT 8
     `);
@@ -373,7 +373,7 @@ router.get('/top-reviewers', isAdmin, async (req, res) => {
         u.email,
         COUNT(r.id) as review_count,
         COALESCE(ROUND(AVG(r.rating)::numeric, 1), 0) as avg_rating
-      FROM public.users u
+      FROM users u
       JOIN reviews r ON u.id = r.userid
       GROUP BY u.id, u.username, u.email
       HAVING COUNT(r.id) > 0

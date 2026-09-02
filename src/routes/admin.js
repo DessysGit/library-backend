@@ -56,38 +56,6 @@ router.post('/fines/:id/waive', isAdmin, async (req, res) => {
   }
 });
 
-// Adjust fine amount
-router.post('/fines/:id/adjust', isAdmin, async (req, res) => {
-  const fineId = req.params.id;
-  const { amount } = req.body;
-  const adminId = req.user.id;
-
-  if (typeof amount !== 'number' || amount < 0) {
-    return res.status(400).json({ error: 'Valid amount is required' });
-  }
-
-  try {
-    const result = await pool.query(
-      'UPDATE fines SET amount = $1 WHERE id = $2 RETURNING *',
-      [amount, fineId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Fine not found' });
-    }
-
-    await logActivity(adminId, ActivityTypes.ADJUST_FINE, {
-      fineId,
-      newAmount: amount
-    }, SeverityLevels.NEUTRAL);
-
-    res.json({ message: 'Fine adjusted successfully', fine: result.rows[0] });
-  } catch (error) {
-    console.error('Error adjusting fine:', error);
-    res.status(500).json({ error: 'Failed to adjust fine' });
-  }
-});
-
 // ==================== RESERVATION MANAGEMENT ====================
 
 // Get all reservations
@@ -236,9 +204,9 @@ router.get('/users', isAdmin, async (req, res) => {
              COALESCE(COUNT(DISTINCT r.id), 0) as total_reviews,
              COALESCE(COUNT(DISTINCT br.id), 0) as total_reservations,
              MAX(ua."createdAt") as last_activity
-      FROM public.users u
+      FROM users u
       LEFT JOIN borrowed_books bb ON bb."userId" = u.id AND bb.status = 'returned'
-      LEFT JOIN reviews r ON r."userId" = u.id
+      LEFT JOIN reviews r ON r.userid = u.id
       LEFT JOIN book_reservations br ON br."userId" = u.id
       LEFT JOIN user_activity ua ON ua."userId" = u.id
       GROUP BY u.id, u.username, u.email, u.role, u.created_at
@@ -276,13 +244,25 @@ router.post('/users/:id/suspend', isAdmin, async (req, res) => {
   const adminId = req.user.id;
 
   try {
-    const user = await pool.query('SELECT role FROM users WHERE id = $1', [userId]);
+    const user = await pool.query('SELECT id, role, username FROM users WHERE id = $1', [userId]);
     
     if (user.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const newRole = user.rows[0].role === 'suspended' ? 'user' : 'suspended';
+    const target = user.rows[0];
+
+    // Prevent suspending the seeded admin account
+    if (target.username === 'admin') {
+      return res.status(400).json({ error: 'The seeded admin account cannot be suspended' });
+    }
+
+    // Prevent an admin from suspending their own account
+    if (target.id === req.user.id) {
+      return res.status(400).json({ error: 'You cannot suspend your own account' });
+    }
+
+    const newRole = target.role === 'suspended' ? 'user' : 'suspended';
     
     await pool.query('UPDATE users SET role = $1 WHERE id = $2', [newRole, userId]);
 
@@ -306,7 +286,7 @@ router.get('/activity/flagged', isAdmin, async (req, res) => {
     const result = await pool.query(`
       SELECT a.*, u.username, u.email
       FROM user_activity a
-      JOIN public.users u ON u.id = a."userId"
+      JOIN users u ON u.id = a."userId"
       WHERE a.severity IN ('suspicious', 'abusive')
       ORDER BY a."createdAt" DESC
       LIMIT 50
@@ -326,7 +306,7 @@ router.get('/activity', isAdmin, async (req, res) => {
     let query = `
       SELECT a.*, u.username
       FROM user_activity a
-      JOIN public.users u ON u.id = a."userId"
+      JOIN users u ON u.id = a."userId"
       WHERE 1=1
     `;
     const params = [];
@@ -385,7 +365,7 @@ router.get('/export/users', isAdmin, async (req, res) => {
              COUNT(DISTINCT r.id) as total_reviews
       FROM users u
       LEFT JOIN borrowed_books bb ON bb."userId" = u.id
-      LEFT JOIN reviews r ON r."userId" = u.id
+      LEFT JOIN reviews r ON r.userid = u.id
       GROUP BY u.id
       ORDER BY u.created_at DESC
     `);

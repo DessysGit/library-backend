@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
+const { logActivity, ActivityTypes, SeverityLevels } = require('../middleware/activityLogger');
 
 // Reserve a book (join waiting queue)
 router.post('/:bookId', isAuthenticated, async (req, res) => {
@@ -45,6 +46,11 @@ router.post('/:bookId', isAuthenticated, async (req, res) => {
       [userId, bookId, queuePosition]
     );
 
+    await logActivity(userId, ActivityTypes.RESERVE, {
+      bookId,
+      bookTitle: bookResult.rows[0].title
+    }, SeverityLevels.NEUTRAL);
+
     res.status(201).json({
       message: `You are #${queuePosition} in the queue for "${bookResult.rows[0].title}". We'll notify you when it's available!`,
       reservation: result.rows[0]
@@ -84,7 +90,7 @@ router.delete('/:id', isAuthenticated, async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, "userId", status FROM book_reservations WHERE id = $1',
+      'SELECT id, "userId", "bookId", status FROM book_reservations WHERE id = $1',
       [reservationId]
     );
 
@@ -98,6 +104,11 @@ router.delete('/:id', isAuthenticated, async (req, res) => {
     }
 
     await pool.query('DELETE FROM book_reservations WHERE id = $1', [reservationId]);
+
+    await logActivity(userId, ActivityTypes.CANCEL_RESERVATION, {
+      bookId: reservation.bookId,
+      reservationId
+    }, SeverityLevels.NEUTRAL);
 
     // Recalculate queue positions for remaining reservations
     await pool.query(
