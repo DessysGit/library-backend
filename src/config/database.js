@@ -310,6 +310,25 @@ async function ensureTables() {
         // Columns may already exist - that's fine
       }
 
+      // Add physicalCopies column to books if not present
+      try {
+        await client.query(`
+          ALTER TABLE books 
+          ADD COLUMN IF NOT EXISTS "physicalCopies" INTEGER DEFAULT 1
+        `);
+      } catch (e) {
+        // Column may already exist - that's fine
+      }
+
+      // Backfill existing books with default copy count
+      try {
+        await client.query(`
+          UPDATE books SET "physicalCopies" = 1 WHERE "physicalCopies" IS NULL
+        `);
+      } catch (e) {
+        // Ignore if column doesn't exist yet
+      }
+
       // Add severity and details columns to user_activity if not present
       try {
         await client.query(`
