@@ -91,7 +91,7 @@ router.get('/', optionalAuth, async (req, res) => {
       const inPlaceholders = bookIds.map((_, i) => `$${i + 1}`).join(', ');
       const borrowedQuery = `SELECT "bookId", COUNT(*) AS count FROM borrowed_books WHERE "bookId" IN (${inPlaceholders}) AND status = 'borrowed' GROUP BY "bookId"`;
       const borrowedResult = await pool.query(borrowedQuery, bookIds);
-      borrowedCounts = Object.fromEntries(borrowedResult.rows.map(r => [r.bookid, parseInt(r.count) || 0]));
+      borrowedCounts = Object.fromEntries(borrowedResult.rows.map(r => [r.bookId || r.bookid, parseInt(r.count) || 0]));
     }
 
     booksWithAdminFlag.forEach(book => {
