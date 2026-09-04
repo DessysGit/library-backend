@@ -163,12 +163,12 @@ router.get('/badges', isAuthenticated, async (req, res) => {
 router.get('/leaderboard', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.username, u."profilePicture",
+      `SELECT u.username, u.profilepicture AS "profilePicture",
               COUNT(bb.id) AS "booksBorrowed",
               (SELECT COUNT(*) FROM badges WHERE "userId" = u.id) AS badges
        FROM users u
        LEFT JOIN borrowed_books bb ON bb."userId" = u.id AND bb.status = 'returned'
-       GROUP BY u.id, u.username, u."profilePicture"
+       GROUP BY u.id, u.username, u.profilepicture
        ORDER BY "booksBorrowed" DESC
        LIMIT 20`
     );
