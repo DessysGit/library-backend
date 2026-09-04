@@ -46,7 +46,10 @@ router.get('/:bookId', async (req, res) => {
     // ── Proxy mode: frontend is fetching binary for in-site reading ─────────────
     // Server fetches from Cloudinary and streams back with Content-Disposition
     // set to inline so the PDF is rendered in the browser reader, not downloaded.
-    if (proxyMode && fileUrl.includes('cloudinary.com')) {
+    // GCS buckets cannot set per-object CORS headers, and the bucket owner account
+    // is no longer accessible, so the in-site reader fetches ALL remote files
+    // (Cloudinary + Google Cloud Storage) through this backend proxy.
+    if (proxyMode && (fileUrl.includes('cloudinary.com') || fileUrl.includes('storage.googleapis.com'))) {
       res.setHeader('Content-Disposition', `inline; filename="${safeFilename}"`);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Cache-Control', 'private');
@@ -60,8 +63,11 @@ router.get('/:bookId', async (req, res) => {
     }
 
     if (fileUrl.startsWith('http')) {
-      if (fileUrl.includes('cloudinary.com')) {
-        // Old Cloudinary files have auto-generated public IDs with no extension.
+      if (fileUrl.includes('cloudinary.com') || fileUrl.includes('storage.googleapis.com')) {
+        // Cloudinary files have auto-generated public IDs with no extension,
+        // and GCS buckets may lack CORS config, so both are proxied through
+        // this backend: the frontend fetches the proxy URL as a blob, which
+        // works for both the in-site reader and downloads regardless of origin.
         // fl_attachment can't include .pdf in the name (Cloudinary rejects dots in
         // transformation params), so we proxy through Render instead.
         // The frontend fetches this proxy URL as a blob, then downloads with
