@@ -78,7 +78,11 @@ router.get('/', isAuthenticated, async (req, res) => {
 
   // Try external Flask service first
   try {
-    const response = await axios.get(`http://127.0.0.1:5000/recommendations?user_id=${encodeURIComponent(userId)}`);
+    // Hard timeout so a half-open connection can never hang the request
+    const response = await axios.get(
+      `http://127.0.0.1:5000/recommendations?user_id=${encodeURIComponent(userId)}`,
+      { timeout: 2000 }
+    );
     if (response.data && response.data.recommendations) {
       const filteredRecommendations = response.data.recommendations
         .filter((book) => book.id !== parseInt(currentBookId))
@@ -97,7 +101,7 @@ router.get('/', isAuthenticated, async (req, res) => {
   } catch (error) {
     console.error("Flask service not available:", error.message);
 
-    // Run Python script directly
+    // Run Python script directly (with a safety net — see below)
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
     const python = spawn(pythonCmd, [
       path.join(__dirname, '../../recommend.py'),
@@ -105,6 +109,48 @@ router.get('/', isAuthenticated, async (req, res) => {
     ]);
 
     let output = '';
+    let settled = false; // guard so we respond exactly once
+
+    const sendFallback = async () => {
+      if (settled) return;
+      settled = true;
+      try {
+        // Fallback: query database directly
+        const fallback = await pool.query(
+          `SELECT b.id, b.title, b.author, b.description, b.cover, b.genres,
+                  COALESCE((SELECT ROUND(AVG(r.rating)::numeric, 1)
+                            FROM reviews r WHERE r.bookid = b.id), 0) AS avg_rating
+           FROM books b
+           WHERE b.id != $1
+           ORDER BY b.id DESC
+           LIMIT 12`,
+          [currentBookId]
+        );
+        
+        const fallbackData = {
+          recommendations: fallback.rows,
+          userLikes: userLikes
+        };
+        
+        // Cache even fallback results
+        setCachedRecommendations(userId, currentBookId, fallbackData);
+        
+        res.json(fallbackData);
+      } catch (dbErr) {
+        console.error("Error fetching fallback recommendations:", dbErr.message);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Error fetching recommendations" });
+        }
+      }
+    };
+
+    // If the interpreter is missing (e.g. ENOENT on Render), 'close' never
+    // fires — handle 'error' or the request would hang forever.
+    python.on('error', async (err) => {
+      console.error('Failed to start recommend.py:', err.message);
+      await sendFallback();
+    });
+
     python.stdout.on('data', (data) => {
       output += data.toString();
     });
@@ -113,7 +159,19 @@ router.get('/', isAuthenticated, async (req, res) => {
       console.error('recommend.py error:', data.toString());
     });
 
+    // Safety net: if the script hasn't finished within 5s, kill it and fall back
+    const killTimer = setTimeout(async () => {
+      if (!settled) {
+        console.error('recommend.py timed out after 5s — using DB fallback');
+        python.kill();
+        await sendFallback();
+      }
+    }, 5000);
+
     python.on('close', async (code) => {
+      if (settled) return;
+      clearTimeout(killTimer);
+      settled = true;
       try {
         const result = JSON.parse(output);
         const filteredRecommendations = result.recommendations
@@ -131,27 +189,8 @@ router.get('/', isAuthenticated, async (req, res) => {
         res.json(responseData);
       } catch (err) {
         console.error('Error parsing recommend.py output:', err);
-
-        // Fallback: query database directly
-        try {
-          const fallback = await pool.query(
-            'SELECT id, title, description, cover FROM books WHERE id != $1 LIMIT 12',
-            [currentBookId]
-          );
-          
-          const fallbackData = {
-            recommendations: fallback.rows,
-            userLikes: userLikes
-          };
-          
-          // Cache even fallback results
-          setCachedRecommendations(userId, currentBookId, fallbackData);
-          
-          res.json(fallbackData);
-        } catch (dbErr) {
-          console.error("Error fetching fallback recommendations:", dbErr.message);
-          res.status(500).json({ error: "Error fetching recommendations" });
-        }
+        // Fall back to DB query directly
+        await sendFallback();
       }
     });
   }
