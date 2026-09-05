@@ -67,8 +67,8 @@ router.get('/', isAuthenticated, async (req, res) => {
     const userLikesResult = await pool.query(
       `SELECT b.id, b.title, b.author, b.genres 
        FROM books b
-       INNER JOIN likes bl ON b.id = bl."bookId"
-       WHERE bl."userId" = $1 AND bl.action = 'like'`,
+       INNER JOIN likes bl ON b.id = bl.bookid
+       WHERE bl.userid = $1 AND bl.action = 'like'`,
       [userId]
     );
     userLikes = userLikesResult.rows;
@@ -115,23 +115,50 @@ router.get('/', isAuthenticated, async (req, res) => {
       if (settled) return;
       settled = true;
       try {
-        // Fallback: query database directly
+        // Fallback: fetch a candidate pool (newest first), then rank by shared
+        // genres with the user's liked books so it's actually personalized.
         const fallback = await pool.query(
           `SELECT b.id, b.title, b.author, b.description, b.cover, b.genres,
-                  COALESCE((SELECT ROUND(AVG(r.rating)::numeric, 1)
+                  COALESCE((SELECT ROUND(AVG(r.rating)::numeric, 1)::float8
                             FROM reviews r WHERE r.bookid = b.id), 0) AS avg_rating
            FROM books b
-           WHERE b.id != $1
+           WHERE ($1::int IS NULL OR b.id != $1::int)
            ORDER BY b.id DESC
-           LIMIT 12`,
-          [currentBookId]
+           LIMIT 60`,
+          [currentBookId ? parseInt(currentBookId) : null]
         );
-        
+
+        // Build the user's genre set from their liked books
+        const likedGenres = new Set();
+        userLikes.forEach((b) =>
+          (b.genres || '')
+            .split(',')
+            .forEach((g) => {
+              const t = g.trim().toLowerCase();
+              if (t) likedGenres.add(t);
+            })
+        );
+
+        // Score each candidate by genre overlap with the user's likes
+        const ranked = fallback.rows
+          .map((book) => {
+            let score = 0;
+            (book.genres || '')
+              .split(',')
+              .forEach((g) => {
+                if (likedGenres.has(g.trim().toLowerCase())) score += 1;
+              });
+            return { ...book, matchScore: score };
+          })
+          // Genre matches first (most matches, then newest), then the rest by recency
+          .sort((a, b) => b.matchScore - a.matchScore || b.id - a.id)
+          .slice(0, 12);
+
         const fallbackData = {
-          recommendations: fallback.rows,
+          recommendations: ranked,
           userLikes: userLikes
         };
-        
+
         // Cache even fallback results
         setCachedRecommendations(userId, currentBookId, fallbackData);
         
