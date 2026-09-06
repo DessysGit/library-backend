@@ -195,7 +195,6 @@ const adminRoutes = require('./routes/admin');                // Admin managemen
 const borrowingRoutes = require('./routes/borrowing');        // Physical book borrowing
 const reservationsRoutes = require('./routes/reservations');  // Book reservations
 const finesRoutes = require('./routes/fines');                // Fine management
-const challengesRoutes = require('./routes/challenges');      // Reading challenges
 const progressRoutes = require('./routes/progress');          // Reading progress
 
 // ============================================
@@ -226,7 +225,6 @@ app.use('/admin', adminRoutes);                    // Admin management endpoints
 app.use('/borrow', borrowingRoutes);               // Borrowing endpoints: /borrow/*
 app.use('/reservations', reservationsRoutes);      // Reservations endpoints: /reservations/*
 app.use('/fines', finesRoutes);                    // Fines endpoints: /fines/*
-app.use('/challenges', challengesRoutes);          // Challenges endpoints: /challenges/*
 app.use('/progress', progressRoutes);              // Reading progress endpoints: /progress/*
 
 // ============================================
