@@ -228,48 +228,7 @@ async function ensureTables() {
       `);
 
       await client.query(`
-        CREATE TABLE IF NOT EXISTS reading_challenges (
-          id SERIAL PRIMARY KEY,
-          title TEXT NOT NULL,
-          description TEXT,
-          "goalBooks" INTEGER NOT NULL DEFAULT 10,
-          "startDate" TIMESTAMP NOT NULL DEFAULT NOW(),
-          "endDate" TIMESTAMP,
-          "createdBy" INTEGER NOT NULL,
-          status TEXT NOT NULL DEFAULT 'active',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY ("createdBy") REFERENCES users(id) ON DELETE CASCADE
-        )
-      `);
-
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS user_challenges (
-          id SERIAL PRIMARY KEY,
-          "challengeId" INTEGER NOT NULL,
-          "userId" INTEGER NOT NULL,
-          "booksRead" INTEGER NOT NULL DEFAULT 0,
-          "joinedAt" TIMESTAMP NOT NULL DEFAULT NOW(),
-          "completedAt" TIMESTAMP,
-          UNIQUE("challengeId", "userId"),
-          FOREIGN KEY ("challengeId") REFERENCES reading_challenges(id) ON DELETE CASCADE,
-          FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE
-        )
-      `);
-
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS badges (
-          id SERIAL PRIMARY KEY,
-          "userId" INTEGER NOT NULL,
-          name TEXT NOT NULL,
-          description TEXT,
-          "awardedAt" TIMESTAMP NOT NULL DEFAULT NOW(),
-          icon TEXT DEFAULT '🏆',
-          FOREIGN KEY ("userId") REFERENCES users(id) ON DELETE CASCADE
-        )
-      `);
-
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS user_activity (
+        CREATE TABLE IF NOT EXISTS user_activityCREATE TABLE IF NOT EXISTS user_activity (
           id SERIAL PRIMARY KEY,
           "userId" INTEGER NOT NULL,
           type TEXT NOT NULL,
